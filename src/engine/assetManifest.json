@@ -1,0 +1,33 @@
+{
+  "maps": {
+    "pueblo_inicial": {
+      "spritesheets": ["luci", "darky"],
+      "terrain": "stone_village"
+    },
+    "bosque_01": {
+      "spritesheets": ["explorer", "luci"],
+      "terrain": "grass_field"
+    },
+    "bosque_02": {
+      "spritesheets": ["explorer", "luci", "darky"],
+      "terrain": "grass_deep"
+    },
+    "cripta_dungeon": {
+      "spritesheets": ["explorer", "darky"],
+      "terrain": "crypt_floor"
+    },
+    "costa_01": {
+      "spritesheets": ["luci", "darky"],
+      "terrain": "coast_beach"
+    },
+    "faro_dungeon": {
+      "spritesheets": ["explorer", "luci", "darky"],
+      "terrain": "faro_tower"
+    }
+  },
+  "urls": {
+    "luci": "https://raw.githubusercontent.com/Leemonztuff/gameassets/bed361d2a6947f097454460c5d8c1a07c0d7de18/luci.png",
+    "darky": "https://raw.githubusercontent.com/Leemonztuff/gameassets/bed361d2a6947f097454460c5d8c1a07c0d7de18/darky.png",
+    "explorer": "https://raw.githubusercontent.com/Leemonztuff/gameassets/bed361d2a6947f097454460c5d8c1a07c0d7de18/explorer.png"
+  }
+}

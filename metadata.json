@@ -1,0 +1,8 @@
+{
+  "name": "Argentum Agite 2.5D Mobile Action RPG",
+  "description": "RPG 2D con render 3D estilo Octopath Traveler, combate en tiempo real con intervalos (agite), alineación en grilla, mazmorras, loot y progresión de habilidades.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

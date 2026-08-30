@@ -1,0 +1,166 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  body {
+    background-color: #08080c;
+    color: #f1f5f9;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+  }
+}
+
+/* Pixel Art Crisp Rendering Engine */
+.pixel-art,
+canvas {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+.font-medieval {
+  font-family: 'Cinzel', serif;
+}
+
+.font-pixel {
+  font-family: 'VT323', monospace;
+}
+
+.font-sans {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Immersive UI Custom Theme Classes */
+.hud-blur {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  background: rgba(8, 8, 14, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hud-panel {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92) 0%, rgba(8, 8, 14, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.health-glow {
+  box-shadow: 0 0 16px rgba(225, 29, 72, 0.45);
+}
+
+.mana-glow {
+  box-shadow: 0 0 16px rgba(37, 99, 235, 0.45);
+}
+
+.gold-glow {
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+}
+
+.amber-glow {
+  box-shadow: 0 0 20px rgba(217, 119, 6, 0.5);
+}
+
+.radial-vignette {
+  background: radial-gradient(circle at center, transparent 60%, rgba(8, 8, 12, 0.8) 100%);
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(8, 8, 14, 0.8);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.5);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.7);
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.6));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(245, 158, 11, 0.95));
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 1.8s infinite ease-in-out;
+}
+
+@keyframes missShake {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-5px, 3px) rotate(-0.5deg); }
+  40% { transform: translate(5px, -4px) rotate(0.5deg); }
+  60% { transform: translate(-4px, -2px) rotate(-0.25deg); }
+  80% { transform: translate(3px, 3px) rotate(0.25deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+.animate-miss-shake {
+  animation: missShake 0.25s ease-in-out;
+}
+
+/* Critical Hit HUD Animations & Impact Vignette Overlays */
+@keyframes hudCritDeal {
+  0% { transform: scale(1) rotate(0deg); }
+  15% { transform: scale(1.04) rotate(-1.8deg) translate3d(-3px, -2px, 0); filter: drop-shadow(0 0 14px rgba(168, 85, 247, 0.85)); }
+  35% { transform: scale(1.02) rotate(1.4deg) translate3d(3px, 2px, 0); filter: drop-shadow(0 0 18px rgba(250, 204, 21, 0.95)); }
+  60% { transform: scale(1.01) rotate(-0.6deg) translate3d(-1px, 1px, 0); filter: drop-shadow(0 0 10px rgba(168, 85, 247, 0.5)); }
+  100% { transform: scale(1) rotate(0deg); filter: none; }
+}
+
+@keyframes hudCritReceive {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  10% { transform: translate(-9px, 7px) rotate(-2.8deg); }
+  25% { transform: translate(9px, -7px) rotate(2.8deg); }
+  40% { transform: translate(-7px, -5px) rotate(-1.8deg); }
+  55% { transform: translate(7px, 5px) rotate(1.8deg); }
+  75% { transform: translate(-3px, 2px) rotate(-0.6deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+@keyframes critVignetteDeal {
+  0% { opacity: 0; transform: scale(1); }
+  15% { opacity: 0.95; transform: scale(1.01); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+@keyframes critVignetteReceive {
+  0% { opacity: 0; transform: scale(1); }
+  15% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+.animate-hud-crit-deal {
+  animation: hudCritDeal 0.45s ease-out;
+}
+
+.animate-hud-crit-receive {
+  animation: hudCritReceive 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+.crit-vignette-deal {
+  box-shadow: inset 0 0 90px 25px rgba(168, 85, 247, 0.65), inset 0 0 45px 12px rgba(250, 204, 21, 0.55);
+  animation: critVignetteDeal 0.45s ease-out forwards;
+}
+
+.crit-vignette-receive {
+  box-shadow: inset 0 0 110px 35px rgba(225, 29, 72, 0.85), inset 0 0 55px 18px rgba(153, 27, 27, 0.95);
+  animation: critVignetteReceive 0.55s ease-out forwards;
+}
+
+
