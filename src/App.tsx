@@ -174,6 +174,53 @@ export default function App() {
 
   const [critEffect, setCritEffect] = useState<{ type: 'deal' | 'receive'; key: number } | null>(null);
 
+  // Combo Counter state
+  const [comboCount, setComboCount] = useState<number>(0);
+  const [comboTargetInstanceId, setComboTargetInstanceId] = useState<string | null>(null);
+  const [comboTargetName, setComboTargetName] = useState<string | null>(null);
+  const [comboLastHitTime, setComboLastHitTime] = useState<number>(0);
+  const [comboTimeLeftPercent, setComboTimeLeftPercent] = useState<number>(100);
+
+  // Ticks down the combo timer window smoothly
+  useEffect(() => {
+    if (comboCount <= 0) return;
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - comboLastHitTime;
+      const remainingMs = 3000 - elapsed;
+
+      if (remainingMs <= 0) {
+        setComboCount(0);
+        setComboTargetInstanceId(null);
+        setComboTargetName(null);
+        setComboTimeLeftPercent(0);
+      } else {
+        setComboTimeLeftPercent((remainingMs / 3000) * 100);
+      }
+    }, 50);
+
+    return () => clearInterval(timer);
+  }, [comboCount, comboLastHitTime]);
+
+  const getUpdatedComboCount = (targetInstanceId: string, targetName: string) => {
+    const now = Date.now();
+    const isSameMob = comboTargetInstanceId === targetInstanceId;
+    const isWithinTime = now - comboLastHitTime <= 3000;
+
+    let nextCombo = 1;
+    if (isSameMob && isWithinTime) {
+      nextCombo = comboCount + 1;
+    }
+
+    setComboCount(nextCombo);
+    setComboTargetInstanceId(targetInstanceId);
+    setComboTargetName(targetName);
+    setComboLastHitTime(now);
+
+    return nextCombo;
+  };
+
   const triggerImpactEffect = (type: 'deal' | 'receive') => {
     const key = Date.now();
     setCritEffect({ type, key });
@@ -487,6 +534,16 @@ export default function App() {
 
       setPlayer((prev) => {
         if (!prev) return null;
+        
+        const prevTile = currentMap.tiles[Math.floor(prev.y)]?.[Math.floor(prev.x)] ?? 0;
+        const nextTile = currentMap.tiles[Math.floor(newY)]?.[Math.floor(newX)] ?? 0;
+        
+        if (prevTile !== 8 && nextTile === 8) {
+          addLog('🛡️ Estás en un camino seguro. La agresión de los monstruos se ha reducido.', 'system');
+        } else if (prevTile === 8 && nextTile !== 8) {
+          addLog('⚠️ Has salido del camino seguro. Los monstruos recuperan su agresividad natural.', 'player_miss');
+        }
+
         return {
           ...prev,
           x: newX,
@@ -993,6 +1050,9 @@ export default function App() {
     const result = CombatEngine.executePlayerAttack(player, mobTemplate);
 
     if (result.hit) {
+      // Track and update combo count synchronously
+      const currentCombo = getUpdatedComboCount(target.instanceId, target.name);
+
       if (result.isCriticalStab || result.isCritical) {
         sound.playStab();
         rendererRef.current?.triggerCriticalHitShake(true, 0.7, 420, target.x, target.y);
@@ -1011,7 +1071,7 @@ export default function App() {
       // Update Mob HP
       const newHp = target.currentHp - result.damage;
       if (newHp <= 0) {
-        handleMobDefeated(target, mobTemplate);
+        handleMobDefeated(target, mobTemplate, currentCombo);
       } else {
         setActiveMobs((prev) =>
           prev.map((m) => (m.instanceId === target?.instanceId ? { ...m, currentHp: newHp, state: 'chasing' } : m))
@@ -1130,9 +1190,11 @@ export default function App() {
       addLog(`Tu ${spell.name} impactó a ${target.name} por ${effectiveSpellDamage} de daño mágico.`, 'spell');
     }
 
+    const currentCombo = getUpdatedComboCount(target.instanceId, target.name);
+
     const newHp = target.currentHp - finalSpellDamage;
     if (newHp <= 0) {
-      handleMobDefeated(target, mobTemplate);
+      handleMobDefeated(target, mobTemplate, currentCombo);
     } else {
       setActiveMobs((prev) =>
         prev.map((m) => (m.instanceId === target?.instanceId ? { ...m, currentHp: newHp, state: 'chasing' } : m))
@@ -1149,7 +1211,7 @@ export default function App() {
   };
 
   // --- MOB DEFEATED & LOOT REWARD ---
-  const handleMobDefeated = (mob: ActiveMob, template: typeof MOBS[string]) => {
+  const handleMobDefeated = (mob: ActiveMob, template: typeof MOBS[string], finalComboCount: number = 0) => {
     sound.playHitImpact(true);
     addLog(`¡Derrotaste a ${mob.name}!`, 'system');
 
@@ -1164,6 +1226,22 @@ export default function App() {
       addLog(`¡VENGANZA CUMPLIDA! Bonificación de oro y EXP obtenida.`, 'system');
       confetti({ particleCount: 50, spread: 70, origin: { y: 0.5 } });
     }
+
+    // Combo EXP Bonus
+    if (finalComboCount >= 2) {
+      const bonusMultiplier = Math.min(0.50, (finalComboCount - 1) * 0.05);
+      const comboBonusExp = Math.round(template.expReward * bonusMultiplier);
+      if (comboBonusExp > 0) {
+        expGain += comboBonusExp;
+        addLog(`¡Combo x${finalComboCount}! ⭐ +${comboBonusExp} EXP adicionales por la cadena de golpes.`, 'loot');
+        addFloatingText(`+${comboBonusExp} EXP Combo x${finalComboCount}!`, '#e9d5ff', mob.x, mob.y - 1.0);
+      }
+    }
+
+    // Clear combo state on mob defeat
+    setComboCount(0);
+    setComboTargetInstanceId(null);
+    setComboTargetName(null);
 
     addFloatingText(`+${expGain} EXP`, '#38bdf8', mob.x, mob.y);
     addFloatingText(`+${goldGain} Oro`, '#fbbf24', mob.x, mob.y - 0.5);
@@ -1348,7 +1426,9 @@ export default function App() {
           if (!template) return mob;
 
           const distToPlayer = Math.hypot(mob.x - p.x, mob.y - p.y);
-          const baseAgroRange = mob.isBoss ? 7 : 5;
+          const playerTile = currentMap.tiles[Math.floor(p.y)]?.[Math.floor(p.x)] ?? 0;
+          const playerOnPath = playerTile === 8;
+          const baseAgroRange = mob.isBoss ? (playerOnPath ? 2 : 7) : (playerOnPath ? 1 : 5);
           const agroRange = isNight ? baseAgroRange + 2 : baseAgroRange;
 
           // If stealthed, mobs lose agro (§5.7)
@@ -1682,6 +1762,9 @@ export default function App() {
           critEffect={critEffect}
           timeProgress={timeProgress}
           isNight={isNight}
+          comboCount={comboCount}
+          comboTargetName={comboTargetName}
+          comboTimeLeftPercent={comboTimeLeftPercent}
         />
       )}
 
@@ -1762,9 +1845,7 @@ export default function App() {
               const startMap = MAPS[newPlayer.currentMapId] || MAPS.pueblo_inicial;
               setCurrentMap(startMap);
               spawnMobsForMap(startMap);
-              const startMsg = classType === 'novicio'
-                ? `¡Bienvenido al Campo de Entrenamiento de Novicios, ${newPlayer.name}! Aprende a alinearte y dominar tu agite.`
-                : `¡Bienvenido a Arandor, ${newPlayer.name}! Tu aventura comienza en Villa Ullathorpe.`;
+              const startMsg = `¡Bienvenido a Arandor, ${newPlayer.name}! Tu aventura comienza en la ciudad segura de Villa Ullathorpe.`;
               addLog(startMsg, 'system');
             }}
           />

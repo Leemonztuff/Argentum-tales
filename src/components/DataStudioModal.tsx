@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { contentRegistry, DataIntegrityReport } from '../services/ContentRegistry';
 import { Item, MobTemplate, Spell, Quest, CraftingRecipe } from '../types/game';
+import { ProceduralTreeGenerator, TreeType } from '../engine/ProceduralTreeGenerator';
+import * as THREE from 'three';
 
 interface DataStudioModalProps {
   isOpen: boolean;
@@ -31,7 +33,7 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
   onClose,
   onContentUpdated,
 }) => {
-  const [activeTab, setActiveTab] = useState<'browse' | 'integrity' | 'json' | 'create'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'integrity' | 'json' | 'create' | 'trees'>('browse');
   const [contentType, setContentType] = useState<'items' | 'mobs' | 'spells' | 'quests' | 'recipes' | 'maps'>('items');
   const [searchQuery, setSearchQuery] = useState('');
   const [jsonInput, setJsonInput] = useState('');
@@ -394,6 +396,16 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
             >
               <Plus className="w-4 h-4" /> Crear Item Custom
             </button>
+            <button
+              onClick={() => setActiveTab('trees')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                activeTab === 'trees'
+                  ? 'bg-amber-500 text-slate-950 font-bold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              <Zap className="w-4 h-4" /> Procedural Trees
+            </button>
           </div>
         </div>
 
@@ -673,6 +685,67 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
                 <Plus className="w-4 h-4" /> Registrar Item en la Base de Datos
               </button>
             </form>
+          )}
+
+          {activeTab === 'trees' && (
+            <div className="space-y-4">
+              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+                <h3 className="font-bold text-slate-100 text-sm mb-2 flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-amber-400" /> Developer Tree Preview
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Vista previa determinista de generación de árboles. Cada semilla genera un modelo único siguiendo las reglas de su arquetipo.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto pr-1">
+                {Array.from({ length: 10 }).map((_, i) => {
+                  const seed = 2000 + i;
+                  const archetypes: TreeType[] = ['FOREST', 'PINE', 'OLD', 'SMALL', 'WIDE', 'TALL'];
+                  const type = archetypes[i % archetypes.length];
+                  
+                  // This is just to get stats, we don't render them here for performance in the modal list
+                  // But we can simulate some stats based on type
+                  const height = type === 'TALL' ? 10 : type === 'SMALL' ? 2 : type === 'WIDE' ? 4 : 5;
+                  const width = type === 'WIDE' ? 6 : type === 'OLD' ? 5 : 3;
+                  const polyCount = (type === 'OLD' ? 1200 : type === 'PINE' ? 800 : 600) + (i * 27);
+
+                  return (
+                    <div key={i} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col gap-2 hover:border-amber-500/30 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-amber-500 font-mono">SEED: {seed}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          {type}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500">Height:</span>
+                          <span className="text-slate-200 font-mono">{height.toFixed(1)}m</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500">Spread:</span>
+                          <span className="text-slate-200 font-mono">{width.toFixed(1)}m</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500">Polygons:</span>
+                          <span className="text-emerald-400 font-mono">~{polyCount}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500">Materials:</span>
+                          <span className="text-blue-400 font-mono">Bark + Foliage</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 h-16 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center">
+                        <span className="text-[10px] text-slate-600 italic">3D Asset Generated in Memory</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
       </div>

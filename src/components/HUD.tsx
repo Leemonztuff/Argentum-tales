@@ -2,7 +2,7 @@ import React from 'react';
 import { PlayerCharacter, GameMap } from '../types/game';
 import { Backpack, Sparkles, BookOpen, Volume2, VolumeX, Shield, Swords, Flame, Footprints, HelpCircle, Database, Sliders, Magnet } from 'lucide-react';
 import { SpriteAvatar } from './SpriteAvatar';
-import { CLASS_SPRITES } from '../data/spritesheets';
+import { CLASS_SPRITES, SPRITESHEETS } from '../data/spritesheets';
 
 interface HUDProps {
   player: PlayerCharacter;
@@ -23,6 +23,9 @@ interface HUDProps {
   critEffect?: { type: 'deal' | 'receive'; key: number } | null;
   timeProgress?: number;
   isNight?: boolean;
+  comboCount?: number;
+  comboTargetName?: string | null;
+  comboTimeLeftPercent?: number;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -44,6 +47,9 @@ export const HUD: React.FC<HUDProps> = ({
   critEffect = null,
   timeProgress = 0.35,
   isNight = false,
+  comboCount = 0,
+  comboTargetName = null,
+  comboTimeLeftPercent = 100,
 }) => {
   const hpPercent = Math.max(0, Math.min(100, (player.currentHp / player.maxHp) * 100));
   const mpPercent = Math.max(0, Math.min(100, (player.currentMp / player.maxMp) * 100));
@@ -95,9 +101,11 @@ export const HUD: React.FC<HUDProps> = ({
         <div key={critEffect?.key ? `status-${critEffect.key}` : 'status-default'} className={`pointer-events-auto flex items-center gap-1.5 sm:gap-2.5 hud-blur rounded-2xl p-1.5 sm:p-2.5 shadow-2xl shadow-black/80 shrink-0 ${critAnimClass}`}>
           <div className="relative shrink-0">
             <SpriteAvatar
-              spriteUrl={CLASS_SPRITES[player.classType]}
+              spriteUrl={player.classType === 'novicio' ? SPRITESHEETS.novice_custom : CLASS_SPRITES[player.classType]}
               facing={player.facing}
-              size={36}
+              size={44}
+              cropMode={player.classType === 'novicio' ? 'bust' : 'none'}
+              className={player.classType === 'novicio' ? 'rounded-full border-2 border-amber-500/50 overflow-hidden' : ''}
             />
             <span className="absolute -bottom-1 -right-1 text-[7px] sm:text-[8px] font-bold text-amber-300 font-pixel bg-slate-950/90 border border-amber-500/40 px-1 rounded shadow">
               Nv.{player.level}
@@ -259,6 +267,40 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Combo Counter HUD Widget */}
+      {comboCount >= 2 && (
+        <div className="self-center pointer-events-auto flex flex-col items-center justify-center gap-1 bg-[#08080c]/95 border border-amber-500/40 px-5 py-2.5 rounded-2xl shadow-2xl shadow-black/90 animate-in fade-in zoom-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs">⚔️</span>
+            <span className="text-[9px] sm:text-[10px] text-slate-300 font-pixel uppercase tracking-widest">COMBO DE ATAQUES</span>
+            <span className="text-xs">⚔️</span>
+          </div>
+          <div className="flex items-baseline gap-1">
+            <span className="text-3xl sm:text-4xl font-black font-pixel text-amber-400 tracking-wide select-none filter drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]">
+              {comboCount}
+            </span>
+            <span className="text-xs sm:text-sm font-black font-pixel text-amber-500 tracking-wider">
+              X
+            </span>
+          </div>
+          {comboTargetName && (
+            <span className="text-[10px] sm:text-xs text-slate-400 font-pixel text-center truncate max-w-[160px]">
+              vs {comboTargetName}
+            </span>
+          )}
+          {/* Smooth visual countdown timer */}
+          <div className="w-28 bg-slate-950 rounded-full h-1.5 border border-amber-500/10 overflow-hidden mt-1 relative">
+            <div
+              className="bg-gradient-to-r from-amber-600 via-amber-400 to-yellow-300 h-full transition-all duration-75 ease-linear"
+              style={{ width: `${comboTimeLeftPercent}%` }}
+            />
+          </div>
+          <span className="text-[9px] text-amber-400/90 font-bold font-pixel tracking-wider mt-0.5">
+            +{Math.min(50, (comboCount - 1) * 5)}% EXP BONUS
+          </span>
+        </div>
+      )}
 
       {/* EXP Progress Bar */}
       <div className="w-full bg-[#08080c]/80 backdrop-blur border border-white/5 rounded-full h-1.5 overflow-hidden shadow-inner">

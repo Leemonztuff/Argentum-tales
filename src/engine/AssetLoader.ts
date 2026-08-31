@@ -1,4 +1,5 @@
 import assetManifest from './assetManifest.json';
+import { TextureAtlas } from './TextureAtlas';
 
 export interface ManifestData {
   maps: Record<string, { spritesheets: string[]; terrain: string }>;
@@ -30,7 +31,7 @@ export class AssetLoader {
     const mapConfig = manifest.maps[mapId] || { spritesheets: ['luci', 'darky', 'explorer'], terrain: 'generic' };
     const spritesheetsToLoad = mapConfig.spritesheets;
 
-    const totalSteps = spritesheetsToLoad.length + 3; // Images + Geometry + Texture Pre-heat + Done
+    const totalSteps = spritesheetsToLoad.length + 4; // Images + Atlas + Geometry + Texture Pre-heat + Done
     let completedSteps = 0;
 
     const updateProgress = (completed: number, status: string) => {
@@ -71,6 +72,18 @@ export class AssetLoader {
     });
 
     await Promise.all(loadPromises);
+
+    // Phase 1.5: Loading Texture Atlas
+    updateProgress(completedSteps, 'Recuperando el Atlas de Texturas Sagrado...');
+    try {
+      await TextureAtlas.getInstance().load();
+      completedSteps++;
+      updateProgress(completedSteps, 'Atlas cargado correctamente.');
+    } catch (e) {
+      console.warn('Error loading TextureAtlas:', e);
+      completedSteps++;
+      updateProgress(completedSteps, 'Error en el Atlas, usando materiales base...');
+    }
 
     // Phase 2: Building Map Geometry & Collision Grid (Simulated high-perf steps for smooth updates)
     completedSteps++;
