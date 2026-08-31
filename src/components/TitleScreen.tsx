@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PlayerCharacter, CharacterClass } from '../types/game';
 import { SpriteAvatar } from './SpriteAvatar';
-import { CLASS_SPRITES } from '../data/spritesheets';
+import { CLASS_SPRITES, SPRITESHEETS } from '../data/spritesheets';
 import { Play, Trash2, Plus, Shield, Sparkles, User, MapPin, Coins } from 'lucide-react';
 
 interface TitleScreenProps {
@@ -81,22 +81,20 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
                 {char ? (
                   /* Occupied Slot - Two Columns: Sprite & Info */
-                  <div className="grid grid-cols-[108px_1fr] gap-4 py-2 items-center">
-                    {/* Column 1: Full-body Sprite Preview (Walking South, No Box) */}
-                    <div className="flex flex-col items-center justify-center my-auto">
-                      <div
-                        className="w-24 h-32 bg-no-repeat bg-center pixel-art"
-                        style={{
-                          backgroundImage: `url("${CLASS_SPRITES[char.classType]}")`,
-                          backgroundSize: '400% 400%',
-                          backgroundPosition: `${colPos} 0%`, // row 0 = facing down (south walk)
-                          imageRendering: 'pixelated',
-                        }}
+                  <div className="grid grid-cols-[112px_1fr] gap-3 py-1 items-center">
+                    {/* Column 1: Full-body Sprite Preview (No frame, maximum height) */}
+                    <div className="flex flex-col items-center justify-center my-auto h-full">
+                      <SpriteAvatar
+                        spriteUrl={char.classType === 'novicio' ? SPRITESHEETS.novice_custom : CLASS_SPRITES[char.classType]}
+                        size={112}
+                        animFrame={animFrame}
+                        facing="down"
+                        noFrame={true}
                       />
                     </div>
 
-                    {/* Column 2: Information & Actions */}
-                    <div className="flex flex-col justify-between overflow-hidden gap-2">
+                    {/* Column 2: Information & Actions oriented to the right with margin */}
+                    <div className="flex flex-col justify-between overflow-hidden gap-2 pl-2">
                       <div>
                         <h3 className="text-sm font-bold text-slate-100 font-medieval truncate">
                           {char.name}
