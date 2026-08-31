@@ -19,6 +19,10 @@ export class Game3DRenderer {
   private renderer: THREE.WebGLRenderer;
   private animationFrameId: number | null = null;
 
+  // Capable-device (desktop/high-perf mobile) vs low-power target: drives pixelRatio,
+  // tone mapping, and shadow resolution scaling (L1/L2).
+  private readonly deviceHighQuality: boolean;
+
   // Submodules
   public cameraManager: CameraManager;
   public instancingManager: SpriteInstancingManager;
@@ -99,6 +103,9 @@ export class Game3DRenderer {
   private currentActiveMobs: ActiveMob[] = [];
 
   // Textures cache & specialized 2.5D Sprite PBR Generator
+  // Bounded LRU cache: sprite/reticle textures are keyed by a fine-grained combo
+  // (hp %, orientation, anim frame) that can grow combinatorially during combat (T3).
+  private readonly SPRITE_TEXTURE_CACHE_MAX = 512;
   private spriteTextureCache: Map<string, THREE.Texture> = new Map();
   public pbrGenerator: SpritePBRGenerator = new SpritePBRGenerator();
   private imageCache: Map<string, HTMLImageElement> = new Map();
@@ -476,6 +483,12 @@ export class Game3DRenderer {
   constructor(container: HTMLElement) {
     this.container = container;
 
+    // Detect low-power/mobile targets to scale rendering quality (L2).
+    this.deviceHighQuality = !(
+      (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) ||
+      (typeof navigator !== 'undefined' && navigator.hardwareConcurrency != null && navigator.hardwareConcurrency <= 4)
+    );
+
     // Scene
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0a0f1d);
@@ -495,19 +508,26 @@ export class Game3DRenderer {
     this.telegraphGroup = new THREE.Group();
 
     this.instancingManager = new SpriteInstancingManager(this.entityGroup);
+    const initRatio = this.deviceHighQuality ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 1.5);
     this.postProcessingManager = new PostProcessingManager(
       container.clientWidth,
       container.clientHeight,
-      window.devicePixelRatio
+      initRatio
     );
 
     // Renderer — Pixel-Perfect setup with crisp image rendering on canvas
     this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Clamp pixel ratio on mobile/low-power devices to protect frame budget (L2).
+    const ratio = this.deviceHighQuality ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 1.5);
+    this.renderer.setPixelRatio(ratio);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Tone mapping for AAA-grade highlight rolloff (L1): ACES on capable devices,
+    // cheaper Reinhard on low-power/mobile targets.
+    this.renderer.toneMapping = this.deviceHighQuality ? THREE.ACESFilmicToneMapping : THREE.ReinhardToneMapping;
+    this.renderer.toneMappingExposure = this.deviceHighQuality ? 1.0 : 1.0;
 
     // Set CSS image-rendering to force pixelated upscale
     this.renderer.domElement.style.imageRendering = 'pixelated';
@@ -761,8 +781,10 @@ export class Game3DRenderer {
     this.dirLight = new THREE.DirectionalLight(0xfff7ed, 1.25); // Warm golden sunlight
     this.dirLight.position.set(15, 30, 20);
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 2048;
-    this.dirLight.shadow.mapSize.height = 2048;
+    // Scale shadow resolution by device quality (1024 low-power / 2048 desktop) (L2)
+    const shadowRes = this.deviceHighQuality ? 2048 : 1024;
+    this.dirLight.shadow.mapSize.width = shadowRes;
+    this.dirLight.shadow.mapSize.height = shadowRes;
     this.dirLight.shadow.camera.near = 0.5;
     this.dirLight.shadow.camera.far = 100;
     const d = 30;
@@ -845,7 +867,10 @@ export class Game3DRenderer {
     const height = this.container.clientHeight || 1;
     this.cameraManager.handleResize(width, height);
     this.renderer.setSize(width, height);
-    this.postProcessingManager.setSize(width, height, window.devicePixelRatio);
+    // Keep post-processing rendering resolution aligned with the clamped pixel ratio (L2).
+    const ratio = this.deviceHighQuality ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 1.5);
+    this.renderer.setPixelRatio(ratio);
+    this.postProcessingManager.setSize(width, height, ratio);
   }
 
   // --- MAP BUILDING ---
@@ -863,6 +888,12 @@ export class Game3DRenderer {
     this.tileGroup.clear();
     this.chestMeshes.clear();
     this.gatherMeshes.clear();
+
+    // Clear transient VFX/telegraph/debug between maps to avoid resource leaks (R8).
+    // Persistent reticle/facing indicator/alignment line are preserved.
+    this.clearTransientVfx();
+    this.disposeGroupChildren(this.telegraphGroup);
+    this.disposeGroupChildren(this.debugGroup);
 
     // Map theme background & fog
     this.scene.background = new THREE.Color(map.fogColor || '#0a0f1d');
@@ -1072,6 +1103,39 @@ export class Game3DRenderer {
   }
 
   // --- TEXTURE & NORMAL/SPECULAR MAP PROVIDER ---
+  /**
+   * LRU get: refreshes recency so the bounded sprite-texture cache evicts the
+   * least-recently-used entries, bounding GPU memory during combat (T3).
+   */
+  private getCachedSpriteTexture(key: string): THREE.Texture | undefined {
+    const tex = this.spriteTextureCache.get(key);
+    if (tex) {
+      // Refresh recency by re-inserting (Map preserves insertion order).
+      this.spriteTextureCache.delete(key);
+      this.spriteTextureCache.set(key, tex);
+    }
+    return tex;
+  }
+
+  /**
+   * LRU set: inserts a texture and evicts the oldest entry (LRU) once the cache
+   * exceeds SPRITE_TEXTURE_CACHE_MAX, disposing released textures.
+   */
+  private setCachedSpriteTexture(key: string, texture: THREE.Texture): void {
+    if (this.spriteTextureCache.has(key)) {
+      this.spriteTextureCache.delete(key);
+    }
+    this.spriteTextureCache.set(key, texture);
+    if (this.spriteTextureCache.size > this.SPRITE_TEXTURE_CACHE_MAX) {
+      const oldestKey = this.spriteTextureCache.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) {
+        const evicted = this.spriteTextureCache.get(oldestKey);
+        this.spriteTextureCache.delete(oldestKey);
+        if (evicted) evicted.dispose();
+      }
+    }
+  }
+
   public getOrCreateSpriteTextures(
     emojiOrIcon: string,
     glowColor: string,
@@ -1087,7 +1151,7 @@ export class Game3DRenderer {
     const isDebug = this.showDebugBounds;
     const key = `${spriteUrl || emojiOrIcon}_${glowColor}_${label || ''}_${isGhost}_${Math.round(hpPercent * 10)}_${showHp}_${facing}_${animFrame}_pp${isPixelMode}_dbg${isDebug}`;
 
-    let texture = this.spriteTextureCache.get(key);
+    let texture = this.getCachedSpriteTexture(key);
     let normalTexture: THREE.Texture | undefined;
     let roughnessTexture: THREE.Texture | undefined;
     let metalnessTexture: THREE.Texture | undefined;
@@ -1113,7 +1177,7 @@ export class Game3DRenderer {
       texture.wrapT = THREE.ClampToEdgeWrapping;
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.needsUpdate = true;
-      this.spriteTextureCache.set(key, texture);
+      this.setCachedSpriteTexture(key, texture);
 
       const generated = this.generateSpriteMaterialTextures(canvas, key);
       normalTexture = generated.normalTexture;
@@ -1429,8 +1493,8 @@ export class Game3DRenderer {
       }
     }
 
-    // 4. Boss Telegraph AoE Zones (§5.9)
-    this.telegraphGroup.clear();
+    // 4. Boss Telegraph AoE Zones (§5.9) — dispose previous frame's resources (P4)
+    this.disposeGroupChildren(this.telegraphGroup);
     activeMobs.forEach((mob) => {
       if (mob.state === 'telegraphing' && mob.telegraphRadius) {
         const circleGeo = new THREE.RingGeometry(0.2, mob.telegraphRadius, 32);
@@ -1445,6 +1509,67 @@ export class Game3DRenderer {
         mesh.position.set(mob.x, 0.08, mob.y);
         this.telegraphGroup.add(mesh);
       }
+    });
+  }
+
+  /**
+   * Releases geometry/material/texture resources of every child in a group
+   * and empties it. Prevents GPU/CPU memory leaks from per-frame `new` + clear.
+   */
+  private disposeGroupChildren(group: THREE.Group) {
+    const toRemove: THREE.Object3D[] = [];
+    group.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) {
+        mat.forEach((m) => m.dispose());
+      } else if (mat) {
+        mat.dispose();
+      }
+      if ((child as THREE.Sprite).material) {
+        ((child as THREE.Sprite).material as THREE.SpriteMaterial).dispose();
+      }
+    });
+    group.children.forEach((child) => toRemove.push(child));
+    toRemove.forEach((child) => group.remove(child));
+  }
+
+  /**
+   * Clears transient VFX from the vfx group (projectiles, telegraphs, loot hops,
+   * dust/impact/miss particles) while preserving the persistent target reticle,
+   * player-facing indicator and alignment line. Resources are released.
+   */
+  private clearTransientVfx() {
+    const persistent: THREE.Object3D[] = [];
+    if (this.groundReticleGroup) persistent.push(this.groundReticleGroup);
+    if (this.playerFacingIndicator) persistent.push(this.playerFacingIndicator);
+    if (this.alignmentLine) persistent.push(this.alignmentLine);
+
+    const transient: THREE.Object3D[] = [];
+    this.vfxGroup.children.forEach((child) => {
+      if (!persistent.includes(child)) transient.push(child);
+    });
+    transient.forEach((child) => {
+      this.vfxGroup.remove(child);
+      const mesh = child as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      if ((child as THREE.Sprite).material) {
+        ((child as THREE.Sprite).material as THREE.SpriteMaterial).dispose();
+      } else {
+        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else if (mat) mat.dispose();
+      }
+      child.traverse((sub) => {
+        if (sub !== child) {
+          const subMesh = sub as THREE.Mesh;
+          if (subMesh.geometry) subMesh.geometry.dispose();
+          const subMat = subMesh.material as THREE.Material | THREE.Material[] | undefined;
+          if (Array.isArray(subMat)) subMat.forEach((m) => m.dispose());
+          else if (subMat) subMat.dispose();
+        }
+      });
     });
   }
 
@@ -1478,6 +1603,7 @@ export class Game3DRenderer {
       } else {
         this.vfxGroup.remove(spellMesh);
         spellMesh.geometry.dispose();
+        (spellMesh.material as THREE.Material).dispose();
       }
     };
 
@@ -1614,8 +1740,9 @@ export class Game3DRenderer {
   ): THREE.Texture {
     const distRound = Math.round(distance * 10) / 10;
     const key = `reticle_status_${status}_${distRound}_${weaponRange}_${color}`;
-    if (this.spriteTextureCache.has(key)) {
-      return this.spriteTextureCache.get(key)!;
+    const cached = this.getCachedSpriteTexture(key);
+    if (cached) {
+      return cached;
     }
 
     const canvas = document.createElement('canvas');
@@ -1656,7 +1783,7 @@ export class Game3DRenderer {
     const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.LinearFilter;
     texture.minFilter = THREE.LinearFilter;
-    this.spriteTextureCache.set(key, texture);
+    this.setCachedSpriteTexture(key, texture);
     return texture;
   }
 
@@ -2585,6 +2712,14 @@ export class Game3DRenderer {
     if (this.instancingManager) {
       this.instancingManager.dispose();
     }
+
+    // Release all remaining GPU resources in every group (R7) — no leaks on unmount/hot-reload.
+    this.disposeGroupChildren(this.tileGroup);
+    this.disposeGroupChildren(this.entityGroup);
+    this.disposeGroupChildren(this.vfxGroup);
+    this.disposeGroupChildren(this.telegraphGroup);
+    this.disposeGroupChildren(this.lightGroup);
+    this.disposeGroupChildren(this.debugGroup);
 
     this.spriteTextureCache.forEach((tex) => tex.dispose());
     this.spriteTextureCache.clear();

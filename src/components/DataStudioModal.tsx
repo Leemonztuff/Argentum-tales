@@ -20,11 +20,12 @@ import {
 import { contentRegistry, DataIntegrityReport } from '../services/ContentRegistry';
 import { Item, MobTemplate, Spell, Quest, CraftingRecipe } from '../types/game';
 import { ProceduralTreeGenerator, TreeType } from '../engine/ProceduralTreeGenerator';
+import { useUIStore } from '../ui';
 import * as THREE from 'three';
 
 interface DataStudioModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
   onContentUpdated?: () => void;
 }
 
@@ -33,6 +34,9 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
   onClose,
   onContentUpdated,
 }) => {
+  const isOpenFromStore = useUIStore((s) => s.openModals.dataStudio);
+  const resolvedIsOpen = isOpen ?? isOpenFromStore;
+  const handleClose = onClose ?? (() => useUIStore.getState().closeModal('dataStudio'));
   const [activeTab, setActiveTab] = useState<'browse' | 'integrity' | 'json' | 'create' | 'trees'>('browse');
   const [contentType, setContentType] = useState<'items' | 'mobs' | 'spells' | 'quests' | 'recipes' | 'maps'>('items');
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,7 +51,7 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
   const [newItemMaxHit, setNewItemMaxHit] = useState(30);
   const [newItemPrice, setNewItemPrice] = useState(500);
 
-  if (!isOpen) return null;
+  if (!resolvedIsOpen) return null;
 
   const report: DataIntegrityReport = contentRegistry.validateDataIntegrity();
 
@@ -325,7 +329,7 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />

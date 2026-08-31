@@ -60,6 +60,7 @@ import { DataStudioModal } from './components/DataStudioModal';
 import { SettingsModal, GameSettingsState } from './components/SettingsModal';
 import { TitleScreen } from './components/TitleScreen';
 import { ToastNotification, ToastMessage } from './components/ToastNotification';
+import { useUIStore, ModalId } from './ui';
 
 export default function App() {
   // Game Setup / Character State
@@ -119,13 +120,17 @@ export default function App() {
   const [combatLogs, setCombatLogs] = useState<CombatLogEntry[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  // Modals State
-  const [showInventory, setShowInventory] = useState(false);
-  const [showSkills, setShowSkills] = useState(false);
-  const [showQuests, setShowQuests] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
-  const [showDataStudio, setShowDataStudio] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  // Modals State (visibility routed through UIStore)
+  const toggleModal = (id: ModalId) => useUIStore.getState().toggleModal(id);
+  const closeModal = (id: ModalId) => useUIStore.getState().closeModal(id);
+  const toggleHelp = () => toggleModal('help');
+  const closeHelp = () => closeModal('help');
+  const toggleInventory = () => toggleModal('inventory');
+  const toggleSkills = () => toggleModal('skills');
+  const toggleQuests = () => toggleModal('quests');
+  const toggleDataStudio = () => toggleModal('dataStudio');
+  const toggleSettings = () => toggleModal('settings');
+  const closeAllModals = () => useUIStore.getState().closeAllModals();
   const [gameSettings, setGameSettings] = useState<GameSettingsState>(() => {
     const saved = localStorage.getItem('argentum_game_settings');
     if (saved) {
@@ -155,15 +160,14 @@ export default function App() {
 
   const updateGameSettings = useCallback((newSettings: Partial<GameSettingsState>) => {
     setGameSettings((prev) => {
-      const updated = { ...prev, ...newSettings };
-      localStorage.setItem('argentum_game_settings', JSON.stringify(updated));
+      const updated = { ...prev, ...newSettings };      localStorage.setItem('argentum_game_settings', JSON.stringify(updated));
       return updated;
     });
   }, []);
-  const [activeShop, setActiveShop] = useState<'weapons' | 'potions' | 'crafting' | 'general' | null>(null);
-  const [activeCrafting, setActiveCrafting] = useState<'smith' | 'alchemy' | null>(null);
-  const [activeDialogueNpc, setActiveDialogueNpc] = useState<NPC | null>(null);
-  const [deathInfo, setDeathInfo] = useState<{ killerName: string; goldLost: number } | null>(null);
+  const activeShop = useUIStore((s) => s.activeShop);
+  const activeCrafting = useUIStore((s) => s.activeCrafting);
+  const activeDialogueNpc = useUIStore((s) => s.activeDialogueNpc);
+  const deathInfo = useUIStore((s) => s.deathInfo);
 
   // Combat Timing & Critical Impact State
   const [attackCooldownPercent, setAttackCooldownPercent] = useState(0);
@@ -745,7 +749,7 @@ export default function App() {
       return {
         label: `Hablar con ${npc.name}`,
         action: () => {
-          setActiveDialogueNpc(npc);
+          useUIStore.getState().setActiveDialogueNpc(npc);
           sound.playPotion();
         },
       };
@@ -1481,7 +1485,7 @@ export default function App() {
                 // Player Defeat (§5.8)
                 sound.playPlayerDeath();
                 const goldPenalty = Math.round(p.gold * 0.1);
-                setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
+                useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
                 setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
               } else {
                 setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
@@ -1613,7 +1617,7 @@ export default function App() {
       };
     });
 
-    setDeathInfo(null);
+    useUIStore.getState().setDeathInfo(null);
     setCurrentMap(MAPS.pueblo_inicial);
     spawnMobsForMap(MAPS.pueblo_inicial, player.revengeTargetTemplateId);
     addLog('Reapareciste en la Villa de Ullathorpe.', 'system');
@@ -1692,7 +1696,7 @@ export default function App() {
       };
     });
 
-    setActiveDialogueNpc(null);
+    useUIStore.getState().setActiveDialogueNpc(null);
     addToast('¡PROMOCIÓN DE JOB!', `¡Te has graduado como ${targetClass.toUpperCase()}!`, '⚔️', 'level');
     addLog(`¡Felicidades! Has sido promocionado exitosamente a la clase ${targetClass.toUpperCase()}.`, 'system');
   };
@@ -1748,12 +1752,12 @@ export default function App() {
             const muted = sound.toggleMute();
             setIsMuted(muted);
           }}
-          onOpenInventory={() => setShowInventory((prev) => !prev)}
-          onOpenSkills={() => setShowSkills((prev) => !prev)}
-          onOpenQuests={() => setShowQuests((prev) => !prev)}
-          onOpenHelp={() => setShowHelp((prev) => !prev)}
-          onOpenDataStudio={() => setShowDataStudio((prev) => !prev)}
-          onOpenSettings={() => setShowSettings((prev) => !prev)}
+          onOpenInventory={toggleInventory}
+          onOpenSkills={toggleSkills}
+          onOpenQuests={toggleQuests}
+          onOpenHelp={toggleHelp}
+          onOpenDataStudio={toggleDataStudio}
+          onOpenSettings={toggleSettings}
           autoPickupEnabled={gameSettings.autoPickup}
           onUsePotion={handleUsePotion}
           hpPotionCount={hpPotionCount}
@@ -1805,21 +1809,17 @@ export default function App() {
           mpPotionCount={mpPotionCount}
           isAlignedWithTarget={isAlignedWithTarget}
           onCycleTarget={handleCycleTarget}
-          onToggleInventory={() => setShowInventory((prev) => !prev)}
-          onToggleSkills={() => setShowSkills((prev) => !prev)}
-          onToggleQuests={() => setShowQuests((prev) => !prev)}
-          onToggleHelp={() => setShowHelp((prev) => !prev)}
-          onToggleSettings={() => setShowSettings((prev) => !prev)}
+          onToggleInventory={toggleInventory}
+          onToggleSkills={toggleSkills}
+          onToggleQuests={toggleQuests}
+          onToggleHelp={toggleHelp}
+          onToggleSettings={toggleSettings}
           onCloseModals={() => {
-            setShowInventory(false);
-            setShowSkills(false);
-            setShowQuests(false);
-            setShowHelp(false);
-            setShowDataStudio(false);
-            setShowSettings(false);
-            setActiveShop(null);
-            setActiveCrafting(null);
-            setActiveDialogueNpc(null);
+            closeAllModals();
+            const st = useUIStore.getState();
+            st.setActiveShop(null);
+            st.setActiveCrafting(null);
+            st.setActiveDialogueNpc(null);
           }}
           isAutoAligning={isAutoAligning}
         />
@@ -1860,10 +1860,9 @@ export default function App() {
       )}
 
       {/* Inventory & Equipment Modal */}
-      {showInventory && player && (
+      {player && (
         <InventoryModal
           player={player}
-          onClose={() => setShowInventory(false)}
           onConsolidateInventory={() => {
             setPlayer((prev) => {
               if (!prev) return null;
@@ -1970,20 +1969,18 @@ export default function App() {
       )}
 
       {/* Skills Mastery & Spellbook Modal */}
-      {showSkills && player && (
+      {player && (
         <SkillsModal
           player={player}
-          onClose={() => setShowSkills(false)}
           onCastSpell={handleCastSpell}
           onUpdateEquippedSpells={(newEquipped) => setPlayer((prev) => (prev ? { ...prev, equippedSpells: newEquipped } : null))}
         />
       )}
 
       {/* Quests Modal */}
-      {showQuests && player && (
+      {player && (
         <QuestModal
           quests={player.activeQuests}
-          onClose={() => setShowQuests(false)}
           onClaimReward={(questId) => {
             setPlayer((prev) => {
               if (!prev) return null;
@@ -2056,7 +2053,7 @@ export default function App() {
         <ShopModal
           shopType={activeShop}
           player={player}
-          onClose={() => setActiveShop(null)}
+          onClose={() => useUIStore.getState().setActiveShop(null)}
           onBuyItem={(item) => {
             if (player.gold < item.price) return;
 
@@ -2116,7 +2113,7 @@ export default function App() {
         <CraftingModal
           station={activeCrafting}
           player={player}
-          onClose={() => setActiveCrafting(null)}
+          onClose={() => useUIStore.getState().setActiveCrafting(null)}
           onCraft={(recipe: CraftingRecipe) => {
             const outputItem = contentRegistry.getItem(recipe.outputItemId) || ITEMS[recipe.outputItemId];
             if (!outputItem) return;
@@ -2193,28 +2190,23 @@ export default function App() {
       {activeDialogueNpc && (
         <DialogueModal
           npc={activeDialogueNpc}
-          onClose={() => setActiveDialogueNpc(null)}
-          onOpenShop={(type) => setActiveShop(type)}
-          onOpenCrafting={(station) => setActiveCrafting(station)}
-          onOpenQuests={() => setShowQuests(true)}
+          onClose={() => useUIStore.getState().setActiveDialogueNpc(null)}
+          onOpenShop={(type) => useUIStore.getState().setActiveShop(type)}
+          onOpenCrafting={(station) => useUIStore.getState().setActiveCrafting(station)}
+          onOpenQuests={() => useUIStore.getState().openModal('quests')}
           onPromoteJob={handlePromoteJob}
           playerClass={player?.classType}
         />
       )}
 
       {/* Help & Guide Modal */}
-      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      <HelpModal onClose={closeHelp} />
 
       {/* Data Studio & Content Registry Modal */}
-      <DataStudioModal
-        isOpen={showDataStudio}
-        onClose={() => setShowDataStudio(false)}
-      />
+      <DataStudioModal />
 
       {/* Settings & Game Options Modal */}
       <SettingsModal
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
         settings={gameSettings}
         onUpdateSettings={updateGameSettings}
         onToggleMute={() => {

@@ -110,15 +110,30 @@ export class SpriteInstancingManager {
   }
 
   public commitFrame(): void {
-    this.mobInstancedBatches.forEach((batch) => {
+    const emptyKeys: string[] = [];
+    this.mobInstancedBatches.forEach((batch, key) => {
       batch.instancedMesh.count = batch.activeCount;
       if (batch.activeCount > 0) {
         batch.instancedMesh.instanceMatrix.needsUpdate = true;
         batch.instancedMesh.visible = true;
       } else {
         batch.instancedMesh.visible = false;
+        // Track empty batches for recycling below (R1) — prevents unbounded draw-call/V-RAM growth.
+        emptyKeys.push(key);
       }
     });
+
+    // Any batch with no active mobs this frame is no longer needed (state combos like
+    // HP decay/orientation/anim-frame go idle as mobs change state). Reclaim it so
+    // combat does not accumulate an ever-growing set of InstancedMeshes.
+    for (const key of emptyKeys) {
+      const batch = this.mobInstancedBatches.get(key);
+      if (!batch) continue;
+      this.mobInstancedBatches.delete(key);
+      this.entityGroup.remove(batch.instancedMesh);
+      batch.instancedMesh.dispose();
+      batch.material.dispose();
+    }
 
     if (this.instancedShadowMesh) {
       this.instancedShadowMesh.count = this.shadowIndex;
