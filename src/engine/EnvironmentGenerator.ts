@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { GameMap } from '../types/game';
 import { ENV_AESTHETICS, BIOMES } from '../data/environmentConfig';
+import { ProceduralTreeGenerator, TreeType } from './ProceduralTreeGenerator';
+import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
 
 // Procedural helpers
 function seededRandom(seed: number) {
@@ -37,40 +39,40 @@ interface FamilyVariant {
 }
 
 function buildTreeFamily(): FamilyVariant[] {
-  const oakTrunk = createDeformedGeometry(new THREE.CylinderGeometry(0.15, 0.25, 1.2, 5), 0.05, 1);
-  oakTrunk.translate(0, 0.6, 0);
-  const oakLeaves = createDeformedGeometry(new THREE.DodecahedronGeometry(0.8, 0), 0.2, 2);
-  oakLeaves.translate(0, 1.5, 0);
+  const archetypes: TreeType[] = ['FOREST', 'PINE', 'OLD', 'SMALL', 'WIDE', 'TALL'];
+  const variants: FamilyVariant[] = [];
 
-  const pineTrunk = createDeformedGeometry(new THREE.CylinderGeometry(0.1, 0.2, 1.8, 5), 0.05, 10);
-  pineTrunk.translate(0, 0.9, 0);
-  const pineLeaves = createDeformedGeometry(new THREE.ConeGeometry(0.7, 1.6, 5), 0.1, 11);
-  pineLeaves.translate(0, 1.8, 0);
+  archetypes.forEach((type, index) => {
+    // Generate 2 variants for each archetype
+    for (let i = 0; i < 2; i++) {
+      const seed = 1000 + index * 100 + i;
+      const geos = ProceduralTreeGenerator.generateGeometries({ seed, type });
+      variants.push({
+        geometry: geos.trunk,
+        secondaryGeometry: geos.foliage
+      });
+    }
+  });
 
-  const bushTrunk = createDeformedGeometry(new THREE.CylinderGeometry(0.2, 0.3, 0.7, 5), 0.05, 20);
-  bushTrunk.translate(0, 0.35, 0);
-  const bushLeaves = createDeformedGeometry(new THREE.IcosahedronGeometry(0.7, 0), 0.15, 21);
-  bushLeaves.scale(1.2, 0.8, 1.2);
-  bushLeaves.translate(0, 1.0, 0);
-
-  return [
-    { geometry: oakTrunk, secondaryGeometry: oakLeaves },
-    { geometry: pineTrunk, secondaryGeometry: pineLeaves },
-    { geometry: bushTrunk, secondaryGeometry: bushLeaves }
-  ];
+  return variants;
 }
 
 function buildRockFamily(): FamilyVariant[] {
+  const atlas = TextureAtlas.getInstance();
+  
   const roundGeo = createDeformedGeometry(new THREE.DodecahedronGeometry(0.4, 0), 0.1, 5);
   roundGeo.translate(0, 0.2, 0);
+  atlas.applyConsistentUVs(roundGeo, AtlasTextureType.STONES_ROUND, 0.8);
 
   const tallGeo = createDeformedGeometry(new THREE.IcosahedronGeometry(0.3, 0), 0.1, 6);
   tallGeo.scale(1, 1.6, 1);
   tallGeo.translate(0, 0.4, 0);
+  atlas.applyConsistentUVs(tallGeo, AtlasTextureType.STONES_DARK, 0.8);
 
   const flatGeo = createDeformedGeometry(new THREE.IcosahedronGeometry(0.4, 0), 0.1, 7);
   flatGeo.scale(1.4, 0.5, 1.2);
   flatGeo.translate(0, 0.1, 0);
+  atlas.applyConsistentUVs(flatGeo, AtlasTextureType.STONES_LIGHT, 0.8);
 
   return [
     { geometry: roundGeo },
@@ -80,14 +82,19 @@ function buildRockFamily(): FamilyVariant[] {
 }
 
 function buildWallFamily(): FamilyVariant[] {
+  const atlas = TextureAtlas.getInstance();
+  
   const blockGeo = new THREE.BoxGeometry(1, 3.2, 1);
   blockGeo.translate(0, 1.6, 0);
+  atlas.applyConsistentUVs(blockGeo, AtlasTextureType.WALL_LIGHT, 1.0);
 
   const chippedGeo = createDeformedGeometry(new THREE.BoxGeometry(1, 3.2, 1, 2, 4, 2), 0.1, 123);
   chippedGeo.translate(0, 1.6, 0);
+  atlas.applyConsistentUVs(chippedGeo, AtlasTextureType.STONES_DARK, 1.0);
 
   const pillarGeo = createDeformedGeometry(new THREE.BoxGeometry(0.8, 3.4, 0.8, 2, 4, 2), 0.08, 124);
   pillarGeo.translate(0, 1.7, 0);
+  atlas.applyConsistentUVs(pillarGeo, AtlasTextureType.STONES_ROUND, 1.0);
 
   return [
     { geometry: blockGeo },
@@ -97,10 +104,16 @@ function buildWallFamily(): FamilyVariant[] {
 }
 
 function buildGrassFamily(): FamilyVariant[] {
+  const atlas = TextureAtlas.getInstance();
+  
   const tuftGeo = new THREE.ConeGeometry(0.15, 0.4, 3);
   tuftGeo.translate(0, 0.2, 0);
+  atlas.applyUVs(tuftGeo, AtlasTextureType.GRASS);
+  
   const wideGeo = new THREE.ConeGeometry(0.25, 0.3, 4);
   wideGeo.translate(0, 0.15, 0);
+  atlas.applyUVs(wideGeo, AtlasTextureType.GRASS);
+  
   return [
     { geometry: tuftGeo },
     { geometry: wideGeo }
@@ -108,35 +121,55 @@ function buildGrassFamily(): FamilyVariant[] {
 }
 
 function buildBushFamily(): FamilyVariant[] {
+  const atlas = TextureAtlas.getInstance();
+  
   const b1 = createDeformedGeometry(new THREE.IcosahedronGeometry(0.4, 0), 0.1, 1);
   b1.translate(0, 0.3, 0);
+  atlas.applyUVs(b1, AtlasTextureType.GRASS);
+  
   const b2 = createDeformedGeometry(new THREE.DodecahedronGeometry(0.5, 0), 0.1, 2);
   b2.scale(1.2, 0.8, 1);
   b2.translate(0, 0.25, 0);
+  atlas.applyUVs(b2, AtlasTextureType.GRASS);
+  
   return [{ geometry: b1 }, { geometry: b2 }];
 }
 
 function buildPebbleFamily(): FamilyVariant[] {
+  const atlas = TextureAtlas.getInstance();
+  
   const p1 = createDeformedGeometry(new THREE.DodecahedronGeometry(0.12, 0), 0.05, 1);
   p1.scale(1, 0.6, 1);
   p1.translate(0, 0.05, 0);
+  atlas.applyUVs(p1, AtlasTextureType.STONES_ROUND);
+  
   const p2 = createDeformedGeometry(new THREE.IcosahedronGeometry(0.1, 0), 0.03, 2);
   p2.scale(1.5, 0.5, 0.8);
   p2.translate(0, 0.04, 0);
+  atlas.applyUVs(p2, AtlasTextureType.STONES_LIGHT);
+  
   return [{ geometry: p1 }, { geometry: p2 }];
 }
 
 function buildMushroomFamily(): FamilyVariant[] {
+  const atlas = TextureAtlas.getInstance();
+  
   const stem = new THREE.CylinderGeometry(0.04, 0.06, 0.25, 5);
   stem.translate(0, 0.125, 0);
+  atlas.applyUVs(stem, AtlasTextureType.WALL_LIGHT);
+  
   const cap = createDeformedGeometry(new THREE.ConeGeometry(0.18, 0.15, 6), 0.02, 1);
   cap.translate(0, 0.25, 0);
+  atlas.applyUVs(cap, AtlasTextureType.ROOF_TILES);
   
   const stem2 = new THREE.CylinderGeometry(0.03, 0.05, 0.15, 5);
   stem2.translate(0, 0.075, 0);
+  atlas.applyUVs(stem2, AtlasTextureType.WALL_LIGHT);
+  
   const cap2 = createDeformedGeometry(new THREE.DodecahedronGeometry(0.12, 0), 0.02, 2);
   cap2.scale(1, 0.5, 1);
   cap2.translate(0, 0.15, 0);
+  atlas.applyUVs(cap2, AtlasTextureType.ROOF_TILES);
   
   return [
     { geometry: stem, secondaryGeometry: cap },
@@ -147,7 +180,6 @@ function buildMushroomFamily(): FamilyVariant[] {
 // ---------------------------------------------------------
 // MAIN GENERATOR
 // ---------------------------------------------------------
-
 
 function createToonGradient() {
   const colors = new Uint8Array(4 * 4);
@@ -168,104 +200,155 @@ function createToonGradient() {
 }
 const toonGradient = createToonGradient();
 
-function createProceduralNormalMap(type: 'stone' | 'wall' | 'grass' | 'wood'): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
+function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, theme: string): THREE.Texture {
   const size = 128;
+  const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const imgData = ctx.createImageData(size, size);
-  const data = imgData.data;
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const idx = (y * size + x) * 4;
-      let nx = 0;
-      let ny = 0;
+  // 1. Solid fallback draw while atlas image preloads
+  const r = (biomeColorHex >> 16) & 255;
+  const g = (biomeColorHex >> 8) & 255;
+  const b = biomeColorHex & 255;
+  
+  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+  ctx.fillRect(0, 0, size, size);
 
-      if (type === 'stone') {
-        // Cobblestone grid with rounded bevels
-        const gx = (x % 32) - 16;
-        const gy = (y % 32) - 16;
-        const dist = Math.sqrt(gx * gx + gy * gy) / 16;
-        if (dist < 1.0) {
-          nx = (gx / 16) * (1.0 - dist);
-          ny = (gy / 16) * (1.0 - dist);
-        }
-      } else if (type === 'wall') {
-        // Brick / Mortar grid pattern
-        const brickH = 16;
-        const brickW = 32;
-        const row = Math.floor(y / brickH);
-        const shift = (row % 2) * (brickW / 2);
-        const bx = ((x + shift) % brickW) - (brickW / 2);
-        const by = (y % brickH) - (brickH / 2);
-        const edgeX = Math.abs(bx) / (brickW / 2);
-        const edgeY = Math.abs(by) / (brickH / 2);
-        
-        if (edgeX > 0.8 || edgeY > 0.8) {
-          nx = Math.sign(bx) * 0.6;
-          ny = Math.sign(by) * 0.6;
-        }
-      } else if (type === 'wood') {
-        // Wood grain ridges
-        const wave = Math.sin(x * 0.3 + Math.sin(y * 0.05) * 4.0);
-        nx = wave * 0.5;
-        ny = Math.cos(y * 0.1) * 0.2;
-      } else {
-        // Grass micro-texture
-        nx = (Math.sin(x * 0.8) + Math.cos(y * 0.5)) * 0.2;
-        ny = (Math.cos(x * 0.5) + Math.sin(y * 0.8)) * 0.2;
-      }
-
-      const r = Math.floor((nx * 0.5 + 0.5) * 255);
-      const g = Math.floor((ny * 0.5 + 0.5) * 255);
-      const b = 255;
-
-      data[idx] = r;
-      data[idx + 1] = g;
-      data[idx + 2] = b;
-      data[idx + 3] = 255;
-    }
+  // Quick fallback noise
+  for (let i = 0; i < 150; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const brightness = (Math.random() - 0.5) * 12;
+    ctx.fillStyle = `rgb(${Math.max(0, Math.min(255, r + brightness))}, ${Math.max(0, Math.min(255, g + brightness + 4))}, ${Math.max(0, Math.min(255, b + brightness))})`;
+    ctx.fillRect(x, y, 1 + Math.random() * 2, 1 + Math.random() * 2);
   }
 
-  ctx.putImageData(imgData, 0, 0);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(2, 2);
-  tex.needsUpdate = true;
-  return tex;
-}
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.NearestMipmapLinearFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
 
-const stoneNormalMap = createProceduralNormalMap('stone');
-const wallNormalMap = createProceduralNormalMap('wall');
-const woodNormalMap = createProceduralNormalMap('wood');
+  // 2. Preload your beautiful original pixel-art atlas texture to crop out exact zones
+  const atlasImage = new Image();
+  atlasImage.src = '/textures/atlas.jpg';
+  atlasImage.onload = () => {
+    const imgW = atlasImage.width;
+    const imgH = atlasImage.height;
+    const colW = imgW / 4;
+    const rowH = imgH / 2;
+
+    // Clear the solid fallback
+    ctx.clearRect(0, 0, size, size);
+
+    // 3. Draw your original GRASS pixel art tile (col = 1, row = 0)
+    ctx.drawImage(atlasImage, colW * 1, rowH * 0, colW, rowH, 0, 0, size, size);
+
+    // 4. Layer the path texture from the atlas (such as STONES_ROUND or STONES_LIGHT) with a feathered alpha mask
+    if (isPath) {
+      let pathCol = 0;
+      let pathRow = 1; // STONES_ROUND as default earthy gravel road
+
+      if (theme === 'coast') {
+        pathCol = 0; pathRow = 0; // STONES_LIGHT for wet coastal sand/cobbles
+      } else if (theme === 'crypt' || theme === 'ruins' || theme === 'fire_temple') {
+        pathCol = 2; pathRow = 0; // STONES_DARK for ancient stone pathing
+      }
+
+      // Create offscreen canvas for the path texture
+      const pathCanvas = document.createElement('canvas');
+      pathCanvas.width = size;
+      pathCanvas.height = size;
+      const pCtx = pathCanvas.getContext('2d')!;
+
+      // Draw the raw path texture from the atlas
+      pCtx.drawImage(atlasImage, colW * pathCol, rowH * pathRow, colW, rowH, 0, 0, size, size);
+
+      // Apply dynamic atmospheric tinting over the path stones to integrate with biome colors
+      let tintR = 124, tintG = 90, tintB = 60, tintAlpha = 0.0;
+      if (theme === 'coast') {
+        tintR = 210; tintG = 185; tintB = 140; tintAlpha = 0.35; // Warm sand
+      } else if (theme === 'crypt') {
+        tintR = 60; tintG = 70; tintB = 90; tintAlpha = 0.45; // Eerie slate
+      } else if (theme === 'fire_temple') {
+        tintR = 130; tintG = 35; tintB = 20; tintAlpha = 0.5; // Volcanic red
+      } else if (theme === 'ruins') {
+        tintR = 100; tintG = 105; tintB = 120; tintAlpha = 0.3; // Dusty grey ruins
+      } else if (theme === 'plains') {
+        tintR = 124; tintG = 90; tintB = 60; tintAlpha = 0.2; // Muddy brown path
+      }
+
+      if (tintAlpha > 0) {
+        pCtx.save();
+        pCtx.fillStyle = `rgba(${tintR}, ${tintG}, ${tintB}, ${tintAlpha})`;
+        pCtx.globalCompositeOperation = 'source-atop';
+        pCtx.fillRect(0, 0, size, size);
+        pCtx.restore();
+      }
+
+      // Use destination-in composite mode to smoothly feather the path edges (melting grass & dirt together)
+      pCtx.save();
+      pCtx.globalCompositeOperation = 'destination-in';
+      const maskGrad = pCtx.createRadialGradient(size / 2, size / 2, size * 0.15, size / 2, size / 2, size * 0.49);
+      maskGrad.addColorStop(0.0, 'rgba(0,0,0,1.0)');
+      maskGrad.addColorStop(0.35, 'rgba(0,0,0,0.85)');
+      maskGrad.addColorStop(0.65, 'rgba(0,0,0,0.35)');
+      maskGrad.addColorStop(1.0, 'rgba(0,0,0,0.0)');
+
+      pCtx.fillStyle = maskGrad;
+      pCtx.fillRect(0, 0, size, size);
+      pCtx.restore();
+
+      // Render the feathered path directly onto our grass base
+      ctx.drawImage(pathCanvas, 0, 0);
+    }
+
+    // Notify Three.js that the texture has updated with high-fidelity atlas pixels
+    texture.needsUpdate = true;
+  };
+
+  return texture;
+}
 
 export class EnvironmentGenerator {
   private instances: THREE.InstancedMesh[] = [];
   private group: THREE.Group | null = null;
   
+  private treeFamily = buildTreeFamily();
+  
+  private barkMaterial = ProceduralTreeGenerator.getTreeMaterial('bark', 123, []);
+  private foliageMaterial = ProceduralTreeGenerator.getTreeMaterial('foliage', 123, []);
+
   private materials = {
-    grass: new THREE.MeshToonMaterial({ color: 0x48793b, gradientMap: toonGradient }),
-    stoneBase: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.stoneBase, gradientMap: toonGradient, normalMap: stoneNormalMap, normalScale: new THREE.Vector2(0.8, 0.8) }),
-    woodBase: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.woodBase, gradientMap: toonGradient, normalMap: woodNormalMap, normalScale: new THREE.Vector2(0.6, 0.6) }),
+    grass: TextureAtlas.getInstance().getMaterial(AtlasTextureType.GRASS),
+    stoneBase: TextureAtlas.getInstance().getMaterial(AtlasTextureType.STONES_ROUND),
+    woodBase: TextureAtlas.getInstance().getMaterial(AtlasTextureType.WOOD_BARK),
     water: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.water, transparent: true, opacity: 0.85, gradientMap: toonGradient }),
     lava: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.lava, emissive: 0xb91c1c, gradientMap: toonGradient }),
-    wall: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.defaultWall, gradientMap: toonGradient, normalMap: wallNormalMap, normalScale: new THREE.Vector2(1.2, 1.2) }),
-    leaves1: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.leaves, gradientMap: toonGradient }),
-    trunk: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.trunk, gradientMap: toonGradient, normalMap: woodNormalMap, normalScale: new THREE.Vector2(0.5, 0.5) }),
-    ore: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.ore, gradientMap: toonGradient }),
+    wall: TextureAtlas.getInstance().getMaterial(AtlasTextureType.WALL_LIGHT),
+    leaves1: this.foliageMaterial,
+    trunk: this.barkMaterial,
+    ore: TextureAtlas.getInstance().getMaterial(AtlasTextureType.STONES_DARK),
     herb: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.herb, emissive: 0x14532d, gradientMap: toonGradient }),
     
     // Procedural Decor Materials
-    bush: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.bush, gradientMap: toonGradient }),
-    pebble: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.pebble, gradientMap: toonGradient, normalMap: stoneNormalMap, normalScale: new THREE.Vector2(0.5, 0.5) }),
-    mushroomStem: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.mushroomStem, gradientMap: toonGradient }),
-    mushroomCap: new THREE.MeshToonMaterial({ color: ENV_AESTHETICS.materials.mushroomCap, gradientMap: toonGradient }),
+    bush: this.foliageMaterial,
+    pebble: TextureAtlas.getInstance().getMaterial(AtlasTextureType.STONES_ROUND),
+    mushroomStem: TextureAtlas.getInstance().getMaterial(AtlasTextureType.WALL_LIGHT),
+    mushroomCap: TextureAtlas.getInstance().getMaterial(AtlasTextureType.ROOF_TILES),
   };
 
-  private treeFamily = buildTreeFamily();
+  constructor() {
+    // Apply toon gradient to all atlas materials for consistent lighting
+    Object.values(this.materials).forEach(mat => {
+      if (mat instanceof THREE.MeshToonMaterial && mat.map && mat.map.name.includes('atlas')) {
+        mat.gradientMap = toonGradient;
+      }
+    });
+  }
+
   private rockFamily = buildRockFamily();
   private wallFamily = buildWallFamily();
   private grassFamily = buildGrassFamily();
@@ -279,8 +362,12 @@ export class EnvironmentGenerator {
       if (instance.geometry) instance.geometry.dispose();
       if (instance.material) {
         if (Array.isArray(instance.material)) {
-          instance.material.forEach((m: any) => m.dispose());
+          instance.material.forEach((m: any) => {
+            if (m.map) m.map.dispose();
+            m.dispose();
+          });
         } else {
+          if (instance.material.map) instance.material.map.dispose();
           instance.material.dispose();
         }
       }
@@ -294,8 +381,22 @@ export class EnvironmentGenerator {
 
     const biome = BIOMES[map.theme] || BIOMES['plains'];
 
-    // Apply Biome Colors
-    this.materials.grass.color.setHex(biome.groundColor);
+    // Dynamically generate procedural canvas textures for ground and blended route
+    const grassTex = generateBlendedTileTexture(biome.groundColor, false, map.theme);
+    const pathTex = generateBlendedTileTexture(biome.groundColor, true, map.theme);
+
+    const grassMat = new THREE.MeshToonMaterial({
+      map: grassTex,
+      gradientMap: toonGradient,
+      side: THREE.DoubleSide
+    });
+
+    const pathMat = new THREE.MeshToonMaterial({
+      map: pathTex,
+      gradientMap: toonGradient,
+      side: THREE.DoubleSide
+    });
+    
     if (biome.wallColor) {
        this.materials.wall.color.setHex(biome.wallColor);
     } else {
@@ -303,7 +404,7 @@ export class EnvironmentGenerator {
        this.materials.wall.color.setHex(ENV_AESTHETICS.materials.defaultWall);
     }
 
-    type PropType = 'ground' | 'wall' | 'water' | 'stone' | 'wood' | 'tree' | 'ore' | 'herb' | 'grassTuft' | 'bush' | 'pebble' | 'mushroom';
+    type PropType = 'ground' | 'path' | 'wall' | 'water' | 'stone' | 'wood' | 'tree' | 'ore' | 'herb' | 'grassTuft' | 'bush' | 'pebble' | 'mushroom';
     
     interface PropPlacement {
       x: number;
@@ -364,6 +465,9 @@ export class EnvironmentGenerator {
           placements.push({ x, y, type: 'ground', variant: 0, seed });
           const variant = Math.floor(randomRange(0, this.rockFamily.length, seed));
           placements.push({ x, y, type: 'ore', variant, seed });
+        }
+        else if (tile === 8) {
+          placements.push({ x, y, type: 'path', variant: 0, seed });
         }
       }
     }
@@ -502,13 +606,22 @@ export class EnvironmentGenerator {
     };
 
     // Flat planes
+    const createPlaneWithUV = (type: AtlasTextureType) => {
+      const geo = new THREE.PlaneGeometry(1, 1);
+      geo.rotateX(-Math.PI / 2);
+      // Using 1,1 repeat because map tiles are already 1x1 world units
+      TextureAtlas.getInstance().applyUVs(geo, type, 1, 1);
+      return geo;
+    };
+    
     const planeGeo = new THREE.PlaneGeometry(1, 1);
     planeGeo.rotateX(-Math.PI / 2);
     
-    spawnSingle('ground', planeGeo, this.materials.grass, ENV_AESTHETICS.terrain.groundHeight, true);
+    spawnSingle('ground', planeGeo, grassMat, ENV_AESTHETICS.terrain.groundHeight, true);
+    spawnSingle('path', planeGeo, pathMat, ENV_AESTHETICS.terrain.groundHeight, true);
     spawnSingle('water', planeGeo, map.theme === 'fire_temple' ? this.materials.lava : this.materials.water, ENV_AESTHETICS.terrain.waterHeight, true);
-    spawnSingle('stone', planeGeo, this.materials.stoneBase, ENV_AESTHETICS.terrain.stoneHeight, true);
-    spawnSingle('wood', planeGeo, this.materials.woodBase, ENV_AESTHETICS.terrain.woodHeight, true);
+    spawnSingle('stone', createPlaneWithUV(AtlasTextureType.STONES_ROUND), this.materials.stoneBase, ENV_AESTHETICS.terrain.stoneHeight, true);
+    spawnSingle('wood', createPlaneWithUV(AtlasTextureType.WOOD_BARK), this.materials.woodBase, ENV_AESTHETICS.terrain.woodHeight, true);
 
     // Herbs (Single variant cone)
     const herbGeo = new THREE.ConeGeometry(0.3, 0.6, 4);

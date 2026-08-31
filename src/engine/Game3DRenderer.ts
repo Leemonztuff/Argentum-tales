@@ -4,6 +4,7 @@ import { MOBS } from '../data/mobs';
 import { SPRITESHEETS, CLASS_SPRITES, NPC_SPRITES, DEFAULT_MOB_SPRITE, DEFAULT_NPC_SPRITE } from '../data/spritesheets';
 import { AssetLoader } from './AssetLoader';
 import { EnvironmentGenerator } from './EnvironmentGenerator';
+import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
 import { PixelShaderConfig, ShaderPresetMode } from './PixelShaderPass';
 import { SpritePBRGenerator, SpriteMaterialTextures } from './SpritePBRGenerator';
 import { CameraManager } from './CameraManager';
@@ -552,6 +553,17 @@ export class Game3DRenderer {
     this.initGlobalLights();
     this.initInputListeners();
     this.startLoop();
+  }
+
+  /**
+   * Universal texture scaling function to ensure consistent mapping across all assets.
+   * Maps a mesh's geometry to the global TextureAtlas while eliminating stretching.
+   */
+  public scaleAtlasTextureOnMesh(mesh: THREE.Mesh, type: AtlasTextureType, unitsPerTile: number = 1.0) {
+    if (!mesh.geometry) return;
+    const atlas = TextureAtlas.getInstance();
+    atlas.applyConsistentUVs(mesh.geometry, type, unitsPerTile);
+    mesh.material = atlas.getMaterial(type);
   }
 
   private initGroundReticle() {

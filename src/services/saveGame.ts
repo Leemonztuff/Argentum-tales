@@ -155,9 +155,9 @@ export const createInitialPlayer = (name: string, classType: CharacterClass): Pl
     equipment.armor = { ...ITEMS.armadura_cuero };
   }
 
-  const startMap = classType === 'novicio' ? 'mapa_novicio' : 'pueblo_inicial';
-  const startX = classType === 'novicio' ? 10 : 12;
-  const startY = classType === 'novicio' ? 4 : 15;
+  const startMap = 'pueblo_inicial';
+  const startX = 12;
+  const startY = 15;
 
   return {
     name: name || 'Viajero',

@@ -10,6 +10,7 @@ interface SpriteAvatarProps {
   className?: string;
   glowColor?: string;
   noFrame?: boolean;
+  cropMode?: 'none' | 'bust';
 }
 
 export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
@@ -21,6 +22,7 @@ export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
   className = '',
   glowColor,
   noFrame = false,
+  cropMode = 'none',
 }) => {
   // If spriteUrl is not provided directly, check if fallbackEmoji matches a class or mob
   const effectiveUrl = spriteUrl || (
@@ -61,8 +63,11 @@ export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
           <img
             src={effectiveUrl}
             alt="avatar"
-            className="w-full h-full object-cover pixel-art select-none"
-            style={{ imageRendering: 'pixelated' }}
+            className={`w-full h-full select-none ${cropMode === 'bust' ? 'object-cover scale-[1.8]' : 'object-cover'}`}
+            style={{ 
+              imageRendering: 'pixelated',
+              objectPosition: cropMode === 'bust' ? 'center 15%' : 'center'
+            }}
           />
         ) : (
           <div
