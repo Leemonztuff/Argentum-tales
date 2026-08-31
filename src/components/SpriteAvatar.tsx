@@ -9,6 +9,7 @@ interface SpriteAvatarProps {
   size?: number; // size in px, default 40
   className?: string;
   glowColor?: string;
+  noFrame?: boolean;
 }
 
 export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
@@ -19,6 +20,7 @@ export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
   size = 40,
   className = '',
   glowColor,
+  noFrame = false,
 }) => {
   // If spriteUrl is not provided directly, check if fallbackEmoji matches a class or mob
   const effectiveUrl = spriteUrl || (
@@ -31,6 +33,9 @@ export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
       : DEFAULT_NPC_SPRITE
   );
 
+  const isStaticPortrait = effectiveUrl === SPRITESHEETS.novice_custom;
+  const shouldHideFrame = noFrame || isStaticPortrait;
+
   const col = animFrame % 4;
   let row = 0;
   if (facing === 'left') row = 1;
@@ -42,23 +47,34 @@ export const SpriteAvatar: React.FC<SpriteAvatarProps> = ({
 
   return (
     <div
-      className={`relative inline-flex items-center justify-center rounded-xl overflow-hidden bg-slate-900/80 border border-white/10 shrink-0 select-none ${className}`}
+      className={`relative inline-flex items-center justify-center shrink-0 select-none ${
+        shouldHideFrame ? '' : 'rounded-xl overflow-hidden bg-slate-900/80 border border-white/10 aspect-square'
+      } ${className}`}
       style={{
         width: `${size}px`,
         height: `${size}px`,
-        boxShadow: glowColor ? `0 0 12px ${glowColor}40` : undefined,
+        boxShadow: glowColor && !shouldHideFrame ? `0 0 12px ${glowColor}40` : undefined,
       }}
     >
       {effectiveUrl ? (
-        <div
-          className="w-full h-full bg-no-repeat bg-center transform scale-100 pixel-art"
-          style={{
-            backgroundImage: `url("${effectiveUrl}")`,
-            backgroundSize: '400% 400%',
-            backgroundPosition: `${posX} ${posY}`,
-            imageRendering: 'pixelated',
-          }}
-        />
+        isStaticPortrait ? (
+          <img
+            src={effectiveUrl}
+            alt="avatar"
+            className="w-full h-full object-cover pixel-art select-none"
+            style={{ imageRendering: 'pixelated' }}
+          />
+        ) : (
+          <div
+            className="w-full h-full bg-no-repeat pixel-art select-none"
+            style={{
+              backgroundImage: `url("${effectiveUrl}")`,
+              backgroundSize: '400% 400%',
+              backgroundPosition: `${posX} ${posY}`,
+              imageRendering: 'pixelated',
+            }}
+          />
+        )
       ) : (
         <span className="text-xl">{fallbackEmoji}</span>
       )}

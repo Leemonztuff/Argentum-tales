@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { CharacterClass } from '../types/game';
 import { Shield, Footprints, Flame, Swords, Play, Sparkles } from 'lucide-react';
 import { SpriteAvatar } from './SpriteAvatar';
-import { CLASS_SPRITES } from '../data/spritesheets';
+import { CLASS_SPRITES, SPRITESHEETS } from '../data/spritesheets';
 
 interface ClassSelectModalProps {
   onStartGame: (name: string, classType: CharacterClass) => void;
@@ -133,7 +133,7 @@ export const ClassSelectModal: React.FC<ClassSelectModalProps> = ({ onStartGame 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <SpriteAvatar
-                      spriteUrl={CLASS_SPRITES[cls.id]}
+                      spriteUrl={cls.id === 'novicio' ? SPRITESHEETS.novice_custom : CLASS_SPRITES[cls.id]}
                       fallbackEmoji={cls.icon}
                       size={36}
                     />
