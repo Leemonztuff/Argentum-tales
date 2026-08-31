@@ -1,14 +1,20 @@
 import React from 'react';
 import { Quest } from '../types/game';
 import { X, CheckCircle, Award, Compass } from 'lucide-react';
+import { useUIStore } from '../ui';
 
 interface QuestModalProps {
   quests: Quest[];
-  onClose: () => void;
+  onClose?: () => void;
   onClaimReward: (questId: string) => void;
 }
 
 export const QuestModal: React.FC<QuestModalProps> = ({ quests, onClose, onClaimReward }) => {
+  const isOpen = useUIStore((s) => s.openModals.quests);
+  const handleClose = onClose ?? (() => useUIStore.getState().closeModal('quests'));
+
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 bg-[#08080c]/85 backdrop-blur-md animate-in fade-in">
       <div className="relative w-full max-w-2xl max-h-[94vh] sm:max-h-[85vh] hud-panel border border-amber-500/20 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto gold-glow">
@@ -22,7 +28,7 @@ export const QuestModal: React.FC<QuestModalProps> = ({ quests, onClose, onClaim
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1 sm:p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition"
           >
             <X className="w-4 h-4 sm:w-5 sm:h-5" />

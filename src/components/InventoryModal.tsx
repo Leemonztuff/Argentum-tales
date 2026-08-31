@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
+import { useUIStore } from '../ui';
 import { PlayerCharacter, Item, ItemType } from '../types/game';
 import { X, Shield, Swords, Sparkles, Footprints, Trash2, ArrowUpCircle, Layers } from 'lucide-react';
 
 interface InventoryModalProps {
   player: PlayerCharacter;
-  onClose: () => void;
+  onClose?: () => void;
   onEquipItem: (item: Item, index: number) => void;
   onUnequipItem: (slot: keyof PlayerCharacter['equipment']) => void;
   onUseItem: (item: Item, index: number) => void;
@@ -22,6 +23,11 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   onConsolidateInventory,
 }) => {
   const [selectedItem, setSelectedItem] = useState<{ item: Item; index?: number; isEquipped?: boolean; slot?: keyof PlayerCharacter['equipment'] } | null>(null);
+
+  const isOpen = useUIStore((s) => s.openModals.inventory);
+  const handleClose = onClose ?? (() => useUIStore.getState().closeModal('inventory'));
+
+  if (!isOpen) return null;
 
   const eq = player.equipment;
 
@@ -48,7 +54,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
             <h2 className="text-sm sm:text-lg font-bold font-medieval text-slate-100">Inventario y Equipamiento</h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1 sm:p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition"
           >
             <X className="w-4 h-4 sm:w-5 sm:h-5" />

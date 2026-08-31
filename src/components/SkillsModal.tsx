@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { PlayerCharacter, SkillName, Spell } from '../types/game';
 import { SPELLS } from '../data/spells';
+import { useUIStore } from '../ui';
 import { X, Sparkles, Shield, Swords, Eye, Zap, Crosshair, Flame, BookOpen, Lock, CheckCircle2, Wand2, Settings2 } from 'lucide-react';
 
 interface SkillsModalProps {
   player: PlayerCharacter;
-  onClose: () => void;
+  onClose?: () => void;
   onCastSpell?: (spell: Spell) => void;
   onUpdateEquippedSpells?: (newEquipped: (string | null)[]) => void;
 }
@@ -17,6 +18,10 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({
   onUpdateEquippedSpells,
 }) => {
   const [activeTab, setActiveTab] = useState<'spells' | 'skills'>('spells');
+  const isOpen = useUIStore((s) => s.openModals.skills);
+  const handleClose = onClose ?? (() => useUIStore.getState().closeModal('skills'));
+
+  if (!isOpen) return null;
 
   const getSkillIcon = (skillKey: SkillName) => {
     switch (skillKey) {
@@ -90,7 +95,7 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition"
           >
             <X className="w-5 h-5" />
@@ -260,8 +265,8 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({
                             <button
                               onClick={() => {
                                 if (hasEnoughMp) {
-                                  onCastSpell(spell);
-                                  onClose();
+                                   onCastSpell(spell);
+                                   handleClose();
                                 }
                               }}
                               disabled={!hasEnoughMp}

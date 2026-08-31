@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Settings, Magnet, Sparkles, Volume2, VolumeX, Eye, Grid, ShieldAlert, CheckCircle2, Sliders, Filter, Coins, FlaskConical, TreePine, Swords, Scroll } from 'lucide-react';
 import { AutoPickupTypeFilters, DEFAULT_AUTO_PICKUP_FILTERS } from '../utils/inventoryUtils';
+import { useUIStore } from '../ui';
 
 export interface GameSettingsState {
   autoPickup: boolean;
@@ -12,8 +13,8 @@ export interface GameSettingsState {
 }
 
 interface SettingsModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
   settings: GameSettingsState;
   onUpdateSettings: (newSettings: Partial<GameSettingsState>) => void;
   onToggleMute: () => void;
@@ -28,7 +29,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleMute,
   onReturnToTitle,
 }) => {
-  if (!isOpen) return null;
+  const isOpenFromStore = useUIStore((s) => s.openModals.settings);
+  const resolvedIsOpen = isOpen ?? isOpenFromStore;
+  const handleClose = onClose ?? (() => useUIStore.getState().closeModal('settings'));
+
+  if (!resolvedIsOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-[#08080c]/85 backdrop-blur-md animate-in fade-in">
@@ -48,7 +53,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <button
             id="btn-close-settings"
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition"
           >
             <X className="w-4 h-4" />
@@ -344,7 +349,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   id="btn-return-to-title"
                   onClick={() => {
-                    onClose();
+                    handleClose();
                     onReturnToTitle();
                   }}
                   className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-pixel text-xs transition"
@@ -364,7 +369,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Configuración guardada en almacenamiento local
           </span>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95"
           >
             Aceptar

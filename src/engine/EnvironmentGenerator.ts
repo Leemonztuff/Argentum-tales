@@ -200,6 +200,15 @@ function createToonGradient() {
 }
 const toonGradient = createToonGradient();
 
+// Shared atlas image singleton — loaded ONCE and reused by every blended-tile
+// generation, instead of creating a new Image() + reload per tile/texture (T2).
+const sharedAtlasImage: HTMLImageElement | null = (() => {
+  if (typeof document === 'undefined') return null;
+  const img = new Image();
+  img.src = '/textures/atlas.jpg';
+  return img;
+})();
+
 function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, theme: string): THREE.Texture {
   const size = 128;
   const canvas = document.createElement('canvas');
@@ -231,12 +240,11 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
   texture.wrapT = THREE.RepeatWrapping;
   texture.needsUpdate = true;
 
-  // 2. Preload your beautiful original pixel-art atlas texture to crop out exact zones
-  const atlasImage = new Image();
-  atlasImage.src = '/textures/atlas.jpg';
-  atlasImage.onload = () => {
-    const imgW = atlasImage.width;
-    const imgH = atlasImage.height;
+  // 2. Reuse the shared atlas image to crop out the exact zones (no per-tile reload)
+  const drawFromAtlas = () => {
+    if (!sharedAtlasImage) return;
+    const imgW = sharedAtlasImage.width;
+    const imgH = sharedAtlasImage.height;
     const colW = imgW / 4;
     const rowH = imgH / 2;
 
@@ -244,7 +252,7 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
     ctx.clearRect(0, 0, size, size);
 
     // 3. Draw your original GRASS pixel art tile (col = 1, row = 0)
-    ctx.drawImage(atlasImage, colW * 1, rowH * 0, colW, rowH, 0, 0, size, size);
+    ctx.drawImage(sharedAtlasImage, colW * 1, rowH * 0, colW, rowH, 0, 0, size, size);
 
     // 4. Layer the path texture from the atlas (such as STONES_ROUND or STONES_LIGHT) with a feathered alpha mask
     if (isPath) {
@@ -264,7 +272,7 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
       const pCtx = pathCanvas.getContext('2d')!;
 
       // Draw the raw path texture from the atlas
-      pCtx.drawImage(atlasImage, colW * pathCol, rowH * pathRow, colW, rowH, 0, 0, size, size);
+      pCtx.drawImage(sharedAtlasImage, colW * pathCol, rowH * pathRow, colW, rowH, 0, 0, size, size);
 
       // Apply dynamic atmospheric tinting over the path stones to integrate with biome colors
       let tintR = 124, tintG = 90, tintB = 60, tintAlpha = 0.0;
@@ -308,6 +316,14 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
     // Notify Three.js that the texture has updated with high-fidelity atlas pixels
     texture.needsUpdate = true;
   };
+
+  if (sharedAtlasImage) {
+    if (sharedAtlasImage.complete && sharedAtlasImage.naturalWidth > 0) {
+      drawFromAtlas();
+    } else {
+      sharedAtlasImage.addEventListener('load', drawFromAtlas, { once: true });
+    }
+  }
 
   return texture;
 }
