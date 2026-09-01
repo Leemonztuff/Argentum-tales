@@ -158,7 +158,7 @@ export const HUD: React.FC<HUDProps> = ({
                 id="btn-hud-quick-hp"
                 onClick={() => onUsePotion('hp')}
                 title="Tomar Poción de Vida (Tecla Q)"
-                className="flex items-center gap-1 px-2 py-1 rounded-xl bg-red-950/40 hover:bg-red-900/60 active:scale-95 border border-red-500/40 text-red-300 transition health-glow"
+                className="flex items-center gap-1 px-3 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 active:scale-95 border border-red-500/40 text-red-300 transition health-glow"
               >
                 <span className="text-xs">🧪</span>
                 <span className="text-[10px] font-bold font-pixel">{hpPotionCount}</span>
@@ -168,7 +168,7 @@ export const HUD: React.FC<HUDProps> = ({
                 id="btn-hud-quick-mp"
                 onClick={() => onUsePotion('mp')}
                 title="Tomar Poción de Maná (Tecla R)"
-                className="flex items-center gap-1 px-2 py-1 rounded-xl bg-sky-950/40 hover:bg-sky-900/60 active:scale-95 border border-sky-500/40 text-sky-300 transition mana-glow"
+                className="flex items-center gap-1 px-3 py-2 rounded-xl bg-sky-950/40 hover:bg-sky-900/60 active:scale-95 border border-sky-500/40 text-sky-300 transition mana-glow"
               >
                 <span className="text-xs">🧪</span>
                 <span className="text-[10px] font-bold font-pixel">{mpPotionCount}</span>
@@ -198,42 +198,42 @@ export const HUD: React.FC<HUDProps> = ({
               id="btn-hud-inventory"
               onClick={onOpenInventory}
               title="Inventario y Equipo [I]"
-              className="p-1 sm:p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-amber-300 border border-white/5 hover:border-amber-400/40 transition"
+              className="w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-amber-300 border border-white/5 hover:border-amber-400/40 transition"
             >
-              <Backpack className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <Backpack className="w-5 h-5" />
             </button>
             <button
               id="btn-hud-skills"
               onClick={onOpenSkills}
               title="Habilidades y Maestría [K]"
-              className="p-1 sm:p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-sky-300 border border-white/5 hover:border-sky-400/40 transition"
+              className="w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-sky-300 border border-white/5 hover:border-sky-400/40 transition"
             >
-              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <Sparkles className="w-5 h-5" />
             </button>
             <button
               id="btn-hud-quests"
               onClick={onOpenQuests}
               title="Misiones del Reino [L]"
-              className="p-1 sm:p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-emerald-300 border border-white/5 hover:border-emerald-400/40 transition"
+              className="w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-emerald-300 border border-white/5 hover:border-emerald-400/40 transition"
             >
-              <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <BookOpen className="w-5 h-5" />
             </button>
             <button
               id="btn-hud-help"
               onClick={onOpenHelp}
               title="Guía y Controles [H / ?]"
-              className="p-1 sm:p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-amber-300 border border-white/5 hover:border-amber-400/40 transition"
+              className="w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-amber-300 border border-white/5 hover:border-amber-400/40 transition"
             >
-              <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+              <HelpCircle className="w-5 h-5 text-amber-400" />
             </button>
             {onOpenDataStudio && (
               <button
                 id="btn-hud-datastudio"
                 onClick={onOpenDataStudio}
                 title="Data Studio & Content Registry [Data-Driven]"
-                className="p-1 sm:p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-amber-300 border border-amber-500/30 hover:border-amber-400/60 transition"
+                className="w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-amber-300 border border-amber-500/30 hover:border-amber-400/60 transition"
               >
-                <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                <Database className="w-5 h-5 text-amber-400" />
               </button>
             )}
             {onOpenSettings && (
@@ -247,7 +247,7 @@ export const HUD: React.FC<HUDProps> = ({
                     : 'border-white/5 hover:border-white/20'
                 }`}
               >
-                <Sliders className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                <Sliders className="w-5 h-5 text-amber-400" />
                 {autoPickupEnabled && (
                   <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
@@ -260,9 +260,9 @@ export const HUD: React.FC<HUDProps> = ({
               id="btn-hud-mute"
               onClick={onToggleMute}
               title="Sonido [M]"
-              className="p-1 sm:p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-slate-100 border border-white/5 transition"
+              className="w-11 h-11 flex items-center justify-center rounded-lg bg-slate-900/80 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-slate-100 border border-white/5 transition"
             >
-              {isMuted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+              {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5 text-emerald-400" />}
             </button>
           </div>
         </div>

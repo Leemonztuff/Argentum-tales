@@ -411,7 +411,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
             <button
               id="btn-quick-hp"
               onClick={() => onUsePotion('hp')}
-              className="absolute bottom-1 right-22 sm:right-26 p-2 sm:p-2.5 rounded-full hud-blur border border-red-500/40 active:scale-90 text-red-400 shadow-xl hover:bg-red-950/40 transition flex items-center justify-center health-glow z-20 shrink-0"
+              className="absolute bottom-1 right-22 sm:right-26 min-w-11 min-h-11 p-2 sm:p-2.5 rounded-full hud-blur border border-red-500/40 active:scale-90 text-red-400 shadow-xl hover:bg-red-950/40 transition flex items-center justify-center health-glow z-20 shrink-0"
               title="Poción de Vida (Tecla Q)"
             >
               <span className="text-base sm:text-xl">🧪</span>
@@ -424,7 +424,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
             <button
               id="btn-dash"
               onClick={onDash}
-              className="absolute bottom-1 right-34 sm:right-38 p-2.5 sm:p-3 rounded-full hud-blur border border-cyan-500/60 active:scale-90 text-cyan-300 shadow-xl hover:bg-cyan-950/40 transition flex items-center justify-center z-20 shrink-0 overflow-hidden"
+              className="absolute bottom-1 right-34 sm:right-38 min-w-12 min-h-12 p-2.5 sm:p-3 rounded-full hud-blur border border-cyan-500/60 active:scale-90 text-cyan-300 shadow-xl hover:bg-cyan-950/40 transition flex items-center justify-center z-20 shrink-0 overflow-hidden"
               title="Dash / Esquive (Tecla X)"
             >
               {dashCooldownPercent > 0 && (
@@ -454,7 +454,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
             <button
               id="btn-quick-mp"
               onClick={() => onUsePotion('mp')}
-              className="absolute bottom-16 sm:bottom-20 right-16 sm:right-20 p-2 sm:p-2.5 rounded-full hud-blur border border-sky-500/40 active:scale-90 text-sky-400 shadow-xl hover:bg-sky-950/40 transition flex items-center justify-center mana-glow z-20 shrink-0"
+              className="absolute bottom-16 sm:bottom-20 right-16 sm:right-20 min-w-11 min-h-11 p-2 sm:p-2.5 rounded-full hud-blur border border-sky-500/40 active:scale-90 text-sky-400 shadow-xl hover:bg-sky-950/40 transition flex items-center justify-center mana-glow z-20 shrink-0"
               title="Poción de Maná (Tecla R)"
             >
               <span className="text-base sm:text-xl">🧪</span>
@@ -468,7 +468,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
               <button
                 id="btn-cycle-target"
                 onClick={onCycleTarget}
-                className="absolute bottom-22 sm:bottom-26 right-1 sm:right-2 p-2 sm:p-2.5 rounded-full hud-blur border border-amber-500/40 text-amber-300 active:scale-90 hover:bg-amber-950/40 transition flex items-center justify-center gold-glow z-20 shadow-xl shrink-0"
+                className="absolute bottom-22 sm:bottom-26 right-1 sm:right-2 min-w-11 min-h-11 p-2 sm:p-2.5 rounded-full hud-blur border border-amber-500/40 text-amber-300 active:scale-90 hover:bg-amber-950/40 transition flex items-center justify-center gold-glow z-20 shadow-xl shrink-0"
                 title="Cambiar Objetivo (Tecla Tab)"
               >
                 <Crosshair className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" />
@@ -480,7 +480,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
               <button
                 id="btn-stealth"
                 onClick={onToggleStealth}
-                className={`absolute bottom-1 sm:bottom-1.5 right-34 sm:right-40 p-2 sm:p-2.5 rounded-full border shadow-xl active:scale-90 transition shrink-0 z-20 ${
+                className={`absolute bottom-1 sm:bottom-1.5 right-34 sm:right-40 min-w-11 min-h-11 p-2 sm:p-2.5 rounded-full border shadow-xl active:scale-90 transition shrink-0 z-20 ${
                   isStealthed
                     ? 'bg-purple-600/90 border-purple-300 text-white animate-pulse shadow-purple-500/50'
                     : 'hud-blur border-white/10 text-purple-400 hover:bg-slate-800/80'
@@ -498,7 +498,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
                 onClick={onToggleSkills}
                 className={`absolute ${
                   canStealth ? 'bottom-12 sm:bottom-15 right-26 sm:right-32' : 'absolute bottom-1 sm:bottom-1.5 right-34 sm:right-40'
-                } p-2 sm:p-2.5 rounded-full hud-blur border border-amber-500/40 text-amber-300 active:scale-90 hover:bg-amber-950/40 transition flex items-center justify-center gold-glow shrink-0 z-20 shadow-xl`}
+                } min-w-11 min-h-11 p-2 sm:p-2.5 rounded-full hud-blur border border-amber-500/40 text-amber-300 active:scale-90 hover:bg-amber-950/40 transition flex items-center justify-center gold-glow shrink-0 z-20 shadow-xl`}
                 title="Abrir Hechizos [K]"
               >
                 <BookOpen className="w-4 h-4 sm:w-5 sm:h-5" />

@@ -50,7 +50,7 @@ export const Modal: React.FC<ModalProps> = ({
   size = 'lg',
   closeOnBackdrop = true,
   closeOnEscape = true,
-  accent = '#f59e0b',
+  accent = colors.gold.base,
   children,
   labelledBy,
   header,
@@ -129,7 +129,7 @@ export const Modal: React.FC<ModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 bg-[#08080c]/85 backdrop-blur-md animate-in fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 bg-[#0B0D0F]/85 backdrop-blur-md animate-in fade-in"
       style={{ backgroundColor: colors.background.overlay }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) handleBackdrop();
@@ -148,10 +148,10 @@ export const Modal: React.FC<ModalProps> = ({
         {header != null ? (
           header
         ) : (
-          <div className="flex items-center justify-between px-3.5 py-2.5 sm:px-5 sm:py-3.5 border-b border-white/10 hud-blur">
+          <div className="flex items-center justify-between px-3.5 py-2.5 sm:px-5 sm:py-3.5 border-b hud-blur" style={{ borderColor: colors.border.subtle }}>
             <div className="flex items-center gap-2 min-w-0">
               {icon != null && <span className="text-lg sm:text-xl shrink-0">{icon}</span>}
-              <h2 id={titleId} className="text-sm sm:text-lg font-bold font-medieval text-slate-100 truncate">
+              <h2 id={titleId} className="text-sm sm:text-lg font-bold font-medieval truncate" style={{ color: colors.text.primary }}>
                 {title}
               </h2>
             </div>
@@ -159,7 +159,10 @@ export const Modal: React.FC<ModalProps> = ({
               type="button"
               onClick={onClose}
               aria-label="Cerrar"
-              className="p-1 sm:p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition"
+              className="p-1 sm:p-1.5 rounded-xl transition"
+              style={{ color: colors.text.muted }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = colors.text.primary)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = colors.text.muted)}
             >
               <X className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>

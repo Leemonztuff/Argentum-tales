@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { X, Gamepad2, Swords, Compass, Sparkles, Backpack, BookOpen, Hand, Shield, Target } from 'lucide-react';
 import { Modal } from '../ui';
 import { useUIStore } from '../ui';
@@ -10,7 +10,7 @@ interface HelpModalProps {
 export const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
   const [tab, setTab] = useState<'controls' | 'combat' | 'systems'>('controls');
   const isOpen = useUIStore((s) => s.openModals.help);
-  const closeFromStore = useUIStore((s) => () => s.closeModal('help'));
+  const closeFromStore = useCallback(() => useUIStore.getState().closeModal('help'), []);
   const handleClose = onClose ?? closeFromStore;
 
   return (

@@ -68,6 +68,8 @@ export interface BiomeConfig {
   decorDensity: number; // 0.0 to 1.0
   allowedDecor: string[]; 
   boundaryReplacement?: number; // Visual override for tile === 1 (e.g. 5 for Tree, 6 for Rock)
+  propDensity?: number; // 0.0 to 1.0 — civilized/ruin props (crates, barrels...)
+  allowedProps?: string[]; // Prop families allowed by this biome
 }
 
 export const BIOMES: Record<string, BiomeConfig> = {
@@ -88,6 +90,8 @@ export const BIOMES: Record<string, BiomeConfig> = {
     wallColor: 0x64748b,
     decorDensity: 0.08,
     allowedDecor: ['grassTuft', 'pebble'],
+    propDensity: 0.05,
+    allowedProps: ['crate', 'barrel', 'bench', 'fence', 'crate_stack'],
   },
   crypt: {
     groundColor: 0x24283b,
@@ -107,6 +111,8 @@ export const BIOMES: Record<string, BiomeConfig> = {
     decorDensity: 0.25,
     allowedDecor: ['pebble', 'bush', 'grassTuft'],
     boundaryReplacement: 6, 
+    propDensity: 0.02,
+    allowedProps: ['crate', 'barrel', 'crate_stack'],
   },
   lighthouse: {
     groundColor: 0x1e3a5f,

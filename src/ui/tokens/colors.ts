@@ -1,67 +1,84 @@
 /**
  * Design Tokens — Colors
  * ------------------------------------------------------------------
- * Single source of truth for the Argentum Agite UI palette.
- * These values mirror the previously hardcoded hex/Tailwind classes
- * used across HUD/modals/settings so the visual identity is unchanged
- * while becoming centralized, consistent and retunable globally.
+ * Single source of truth for the Argentum Tales UI palette, aligned
+ * with the project UI Bible (`.opencode/skills/argentum-ui-bible`).
+ * Medieval, desaturated, restrained: dark surfaces, warm gold accent,
+ * muted metal borders and a clear text hierarchy.
  *
  * Conventions: names in Spanish (repo convention); use these tokens
- * instead of raw hex in new components.
+ * instead of raw hex in new components. Keep surfaces few — never
+ * introduce dozens of unrelated background colors.
  */
 
 export const colors = {
-  // Base surfaces
+  // Base surfaces (UI Bible §4)
   background: {
-    base: '#08080c',
-    panel: '#0f172a',
-    panelDeep: '#08080e',
-    overlay: 'rgba(8, 8, 14, 0.82)',
+    base: '#111315',
+    panel: '#17191C',
+    panelDeep: '#0B0D0F',
+    overlay: 'rgba(11, 13, 15, 0.82)',
   },
 
   // Semantic resource colors
   health: {
-    base: '#ef4444',
-    from: '#dc2626',
-    via: '#f43f5e',
-    to: '#ef4444',
-    glow: 'rgba(225, 29, 72, 0.45)',
-    border: '#7f1d1d',
-    text: '#fca5a5',
+    base: '#A83A32',
+    from: '#D14A3F',
+    via: '#A83A32',
+    to: '#A83A32',
+    glow: 'rgba(209, 74, 63, 0.45)',
+    border: '#7F2E29',
+    text: '#C9908A',
   },
   mana: {
-    base: '#3b82f6',
-    from: '#0284c7',
-    via: '#22d3ee',
-    to: '#3b82f6',
-    glow: 'rgba(37, 99, 235, 0.45)',
-    border: '#075985',
-    text: '#bae6fd',
+    base: '#356A9A',
+    from: '#356A9A',
+    via: '#4F8FC2',
+    to: '#4F8FC2',
+    glow: 'rgba(79, 143, 194, 0.45)',
+    border: '#2C4E6E',
+    text: '#9FC3E0',
   },
   exp: {
-    from: '#f59e0b',
-    via: '#facc15',
-    to: '#fcd34d',
-    glow: 'rgba(245, 158, 11, 0.35)',
+    from: '#8F6D2B',
+    via: '#C89B3C',
+    to: '#E0B85A',
+    glow: 'rgba(200, 155, 60, 0.35)',
   },
   gold: {
-    base: '#f59e0b',
-    text: '#fbbf24',
-    glow: 'rgba(245, 158, 11, 0.35)',
-    border: 'rgba(245, 158, 11, 0.30)',
+    base: '#C89B3C',
+    text: '#E0B85A',
+    glow: 'rgba(200, 155, 60, 0.35)',
+    border: 'rgba(200, 155, 60, 0.30)',
   },
 
-  // Borders
+  // Semantic feedback types (UI Bible §4)
+  success: {
+    base: '#547A50',
+    text: '#9BBA96',
+  },
+  warning: {
+    base: '#B17A35',
+    text: '#D6AE7A',
+  },
+  error: {
+    base: '#9A3A35',
+    text: '#CE8A85',
+  },
+
+  // Borders (UI Bible §38 — subtle, muted metal)
   border: {
-    subtle: 'rgba(255, 255, 255, 0.08)',
-    divider: 'rgba(255, 255, 255, 0.05)',
+    subtle: 'rgba(229, 224, 214, 0.08)',
+    divider: 'rgba(229, 224, 214, 0.06)',
   },
 
-  // Text
+  // Text (UI Bible §4)
   text: {
-    primary: '#f1f5f9',
-    secondary: '#cbd5e1',
-    muted: '#94a3b8',
-    label: '#e2e8f0',
+    primary: '#E5E0D6',
+    secondary: '#AAA59B',
+    muted: '#77736C',
+    label: '#E5E0D6',
+    disabled: '#55524D',
+    important: '#D7B45A',
   },
 } as const;

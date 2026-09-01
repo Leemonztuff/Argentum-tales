@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { CharacterClass } from '../types/game';
-import { Shield, Footprints, Flame, Swords, Play, Sparkles } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { SpriteAvatar } from './SpriteAvatar';
 import { CLASS_SPRITES, SPRITESHEETS } from '../data/spritesheets';
+import { Modal } from '../ui';
 
 interface ClassSelectModalProps {
   onStartGame: (name: string, classType: CharacterClass) => void;
@@ -87,10 +88,16 @@ export const ClassSelectModal: React.FC<ClassSelectModalProps> = ({ onStartGame 
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-[#08080c]/90 backdrop-blur-md animate-in fade-in overflow-y-auto">
-      <div className="relative w-full max-w-2xl max-h-[94vh] sm:max-h-[90vh] hud-panel border border-amber-500/30 rounded-2xl sm:rounded-3xl shadow-2xl overflow-y-auto flex flex-col p-4 sm:p-7 my-auto gold-glow">
-        {/* Title & Banner */}
-        <div className="text-center mb-3 sm:mb-5">
+    <Modal
+      isOpen={true}
+      onClose={() => {/* no-op: class select cannot be closed */}}
+      title="Argentum Agite: Crónicas de Arandor"
+      size="lg"
+      closeOnBackdrop={false}
+      closeOnEscape={false}
+      accent="#C89B3C"
+      header={
+        <div className="px-4 sm:px-7 pt-4 sm:pt-7 pb-2 sm:pb-3 text-center border-b border-white/10 hud-blur">
           <span className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-amber-400 font-pixel">
             RPG 2D con Render 3D • Agite en Tiempo Real
           </span>
@@ -101,7 +108,9 @@ export const ClassSelectModal: React.FC<ClassSelectModalProps> = ({ onStartGame 
             Crea tu personaje y adéntrate en mazmorras, fortalezas y costas conectadas.
           </p>
         </div>
-
+      }
+    >
+      <div className="p-4 sm:p-7 flex flex-col">
         {/* Name Input */}
         <div className="mb-3 sm:mb-5 flex flex-col gap-1">
           <label className="text-[11px] sm:text-xs font-bold text-slate-300 uppercase tracking-wider">Nombre del Héroe</label>
@@ -165,6 +174,6 @@ export const ClassSelectModal: React.FC<ClassSelectModalProps> = ({ onStartGame 
           <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" /> Comenzar Aventura
         </button>
       </div>
-    </div>
+    </Modal>
   );
 };

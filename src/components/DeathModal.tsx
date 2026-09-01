@@ -1,5 +1,6 @@
 import React from 'react';
 import { Skull, RefreshCw, Flame } from 'lucide-react';
+import { Modal } from '../ui';
 
 interface DeathModalProps {
   killerMobName: string;
@@ -13,15 +14,23 @@ export const DeathModal: React.FC<DeathModalProps> = ({
   onRespawn,
 }) => {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-[#08080c]/90 backdrop-blur-md animate-in fade-in overflow-y-auto">
-      <div className="relative w-full max-w-md max-h-[94vh] sm:max-h-[85vh] overflow-y-auto hud-panel border border-red-500/50 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-6 text-center flex flex-col items-center gap-3 sm:gap-4 health-glow my-auto">
+    <Modal
+      isOpen={true}
+      onClose={onRespawn}
+      title="Has Caído en Batalla"
+      icon={<Skull className="w-5 h-5 text-red-400" />}
+      size="sm"
+      closeOnBackdrop={false}
+      closeOnEscape={false}
+      accent="#A83A32"
+    >
+      <div className="p-4 sm:p-6 text-center flex flex-col items-center gap-3 sm:gap-4">
         {/* Skull Icon */}
         <div className="p-2.5 sm:p-3.5 bg-red-950/80 border border-red-500/60 rounded-full shadow-2xl text-red-400 animate-pulse health-glow">
           <Skull className="w-8 h-8 sm:w-10 sm:h-10" />
         </div>
 
         <div>
-          <h2 className="text-lg sm:text-2xl font-black font-medieval text-red-400">Has Caído en Batalla</h2>
           <p className="text-[11px] sm:text-sm text-slate-300 mt-0.5 sm:mt-1">
             Fuiste derrotado por <strong className="text-red-300">{killerMobName}</strong>.
           </p>
@@ -51,6 +60,6 @@ export const DeathModal: React.FC<DeathModalProps> = ({
           <RefreshCw className="w-4 h-4" /> Reaparecer en Villa Ullathorpe
         </button>
       </div>
-    </div>
+    </Modal>
   );
 };
