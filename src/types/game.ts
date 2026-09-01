@@ -40,6 +40,8 @@ export interface PlayerStats {
   carisma: number;
 }
 
+export type ItemRarity = 'comun' | 'poco_comun' | 'raro' | 'epico' | 'legendario';
+
 export interface Item {
   id: string;
   name: string;
@@ -50,6 +52,8 @@ export interface Item {
   sellPrice: number;
   stackable?: boolean;
   count?: number;
+  /** Optional explicit rarity. When omitted, rank is derived from price. */
+  rarity?: ItemRarity;
   
   // Weapon stats
   minHit?: number;

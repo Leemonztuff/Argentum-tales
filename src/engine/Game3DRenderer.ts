@@ -2022,6 +2022,9 @@ export class Game3DRenderer {
       const deltaTime = Math.min(0.05, (now - this.lastFrameTime) / 1000); // Clamp deltaTime to avoid giant jumps
       this.lastFrameTime = now;
 
+      // Animated world fluids (stylized water waves / lava pulse)
+      this.envGen.update(deltaTime);
+
       // Flickering torch lights
       if (this.playerLight) {
         this.playerLight.intensity = 1.1 + Math.sin(Date.now() * 0.01) * 0.15;
@@ -2290,6 +2293,9 @@ export class Game3DRenderer {
 
       // Update Instanced Mesh Counts and Matrices
       this.instancingManager.commitFrame();
+
+      // Re-orient world-art billboards (Cainos props/plants) toward the camera
+      this.envGen.updateBillboardOrientations(camQuat);
 
       // Ground Reticle Continuous Animation
       if (this.groundReticleGroup && this.groundReticleGroup.visible) {
