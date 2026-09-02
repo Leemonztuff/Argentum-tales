@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GameMap, PlayerCharacter, ActiveMob, FloatingText, SelectedTarget, NPC } from '../types/game';
 import { MOBS } from '../data/mobs';
-import { SPRITESHEETS, CLASS_SPRITES, NPC_SPRITES, DEFAULT_MOB_SPRITE, DEFAULT_NPC_SPRITE } from '../data/spritesheets';
+import { SPRITESHEETS, CLASS_SPRITES, NPC_SPRITES, DEFAULT_MOB_SPRITE, DEFAULT_NPC_SPRITE, BODY_SPRITES, HEAD_SPRITES } from '../data/spritesheets';
 import { AssetLoader } from './AssetLoader';
 import { EnvironmentGenerator } from './EnvironmentGenerator';
 import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
@@ -12,6 +12,28 @@ import { SpriteInstancingManager } from './SpriteInstancingManager';
 import { PostProcessingManager } from './PostProcessingManager';
 
 export { type SpriteMaterialTextures };
+
+// Magenta/fuchsia chroma-key: pixels close to (255, 0, 255) become transparent.
+// Used for spritesheets exported with a magenta background instead of an alpha
+// channel (e.g. JPEG player spritesheets). Pure-alpha PNGs are left untouched.
+const MAGENTA_TOLERANCE = 60;
+
+function applyMagentaKeyToCanvas(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    // Near-pure magenta: high red & blue, very low green
+    if (r > 200 && g < 80 && b > 200 && Math.abs(r - b) < MAGENTA_TOLERANCE) {
+      d[i + 3] = 0;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
 
 export class Game3DRenderer {
   private container: HTMLElement;
@@ -259,6 +281,7 @@ export class Game3DRenderer {
     isStealthed: boolean;
     facing: 'up' | 'down' | 'left' | 'right';
     spriteUrl: string;
+    overlaySpriteUrls: string[];
   } | null = null;
   private playerNeedsTextureRefresh: boolean = false;
   private playerWalkDistance: number = 0;
@@ -942,7 +965,8 @@ export class Game3DRenderer {
     showHp = false,
     spriteUrl?: string,
     facing: 'up' | 'down' | 'left' | 'right' = 'down',
-    animFrame: number = 0
+    animFrame: number = 0,
+    overlaySpriteUrls: string[] = []
   ): HTMLCanvasElement {
     const isPixelMode = this.pixelPerfectEnabled;
     const canvas = document.createElement('canvas');
@@ -1014,9 +1038,25 @@ export class Game3DRenderer {
       debugDestH = destH;
 
       // Draw original sprite artwork WITHOUT shadow blur so pixels remain 100% crisp and unpolluted
-      ctx.save();
       ctx.drawImage(img, sx, sy, frameW, frameH, destX, destY, destW, destH);
-      ctx.restore();
+
+      // Apply layered overlays (e.g. head on top of body). Overlay sheets share the
+      // same grid/frame size, so the matching cell is drawn at the exact same dest rect.
+      for (const overlayUrl of overlaySpriteUrls) {
+        const overlayImg = overlayUrl ? this.getOrLoadImage(overlayUrl) : null;
+        if (!overlayImg) continue;
+        const oFrameW = Math.floor(overlayImg.width / 4);
+        const oFrameH = Math.floor(overlayImg.height / 4);
+        const oSx = Math.floor((animFrame % 4) * oFrameW);
+        let oSy = Math.floor(0 * oFrameH);
+        if (facing === 'left') oSy = Math.floor(1 * oFrameH);
+        else if (facing === 'right') oSy = Math.floor(2 * oFrameH);
+        else if (facing === 'up') oSy = Math.floor(3 * oFrameH);
+        ctx.drawImage(overlayImg, oSx, oSy, oFrameW, oFrameH, destX, destY, destW, destH);
+      }
+
+      // Convert any magenta chroma-key background to transparent (JPEG spritesheets)
+      applyMagentaKeyToCanvas(canvas);
     } else {
       // Fallback emoji icon while loading
       ctx.font = '96px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
@@ -1145,11 +1185,13 @@ export class Game3DRenderer {
     showHp = false,
     spriteUrl?: string,
     facing: 'up' | 'down' | 'left' | 'right' = 'down',
-    animFrame: number = 0
+    animFrame: number = 0,
+    overlaySpriteUrls: string[] = []
   ): SpriteMaterialTextures {
     const isPixelMode = this.pixelPerfectEnabled;
     const isDebug = this.showDebugBounds;
-    const key = `${spriteUrl || emojiOrIcon}_${glowColor}_${label || ''}_${isGhost}_${Math.round(hpPercent * 10)}_${showHp}_${facing}_${animFrame}_pp${isPixelMode}_dbg${isDebug}`;
+    const overlaysKey = overlaySpriteUrls.join('|');
+    const key = `${spriteUrl || emojiOrIcon}_${overlaysKey}_${glowColor}_${label || ''}_${isGhost}_${Math.round(hpPercent * 10)}_${showHp}_${facing}_${animFrame}_pp${isPixelMode}_dbg${isDebug}`;
 
     let texture = this.getCachedSpriteTexture(key);
     let normalTexture: THREE.Texture | undefined;
@@ -1166,7 +1208,8 @@ export class Game3DRenderer {
         showHp,
         spriteUrl,
         facing,
-        animFrame
+        animFrame,
+        overlaySpriteUrls
       );
 
       texture = new THREE.CanvasTexture(canvas);
@@ -1274,7 +1317,8 @@ export class Game3DRenderer {
     // 1. Cache Player Render Parameters
     const playerIcon = player.classType === 'guerrero' ? '🛡️🗡️' : player.classType === 'cazador' ? '🏹🧝' : player.classType === 'mago' ? '🧙‍♂️✨' : '🗡️🥷';
     const playerGlow = player.classType === 'mago' ? '#38bdf8' : player.classType === 'picaro' ? '#a855f7' : player.classType === 'guerrero' ? '#eab308' : '#22c55e';
-    const playerUrl = CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
+    const playerUrl = BODY_SPRITES.humano02 || CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
+    const playerHeadUrl = HEAD_SPRITES.head_humano02;
 
     const newPlayerParams = {
       icon: playerIcon,
@@ -1283,6 +1327,7 @@ export class Game3DRenderer {
       isStealthed: player.isStealthed,
       facing: player.facing,
       spriteUrl: playerUrl,
+      overlaySpriteUrls: playerHeadUrl ? [playerHeadUrl] : [],
     };
 
     if (
@@ -1290,7 +1335,8 @@ export class Game3DRenderer {
       this.playerRenderParams.facing !== newPlayerParams.facing ||
       this.playerRenderParams.isStealthed !== newPlayerParams.isStealthed ||
       this.playerRenderParams.name !== newPlayerParams.name ||
-      this.playerRenderParams.spriteUrl !== newPlayerParams.spriteUrl
+      this.playerRenderParams.spriteUrl !== newPlayerParams.spriteUrl ||
+      this.playerRenderParams.overlaySpriteUrls.join('|') !== newPlayerParams.overlaySpriteUrls.join('|')
     ) {
       this.playerNeedsTextureRefresh = true;
     }
@@ -2135,7 +2181,8 @@ export class Game3DRenderer {
               false,
               this.playerRenderParams.spriteUrl,
               this.playerRenderParams.facing,
-              pAnimFrame
+              pAnimFrame,
+              this.playerRenderParams.overlaySpriteUrls
             );
             const mat = this.create2DSpriteMaterial(spriteTextures);
 
@@ -2156,7 +2203,8 @@ export class Game3DRenderer {
               false,
               this.playerRenderParams.spriteUrl,
               this.playerRenderParams.facing,
-              pAnimFrame
+              pAnimFrame,
+              this.playerRenderParams.overlaySpriteUrls
             );
             this.update2DSpriteMaterial(this.playerMesh.material, spriteTextures);
           }
