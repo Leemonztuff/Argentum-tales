@@ -15,6 +15,9 @@ export class SpritePBRGenerator {
   private spriteMetalnessTextureCache: Map<string, THREE.Texture> = new Map();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
+  // Lightweight profiling counter
+  public perfCounters = { cacheHits: 0, cacheMisses: 0 };
+
   // Settings
   public spriteNormalEnabled: boolean = true;
   public spriteNormalStrength: number = 1.4;
@@ -51,12 +54,14 @@ export class SpritePBRGenerator {
       this.spriteRoughnessTextureCache.has(key) &&
       this.spriteMetalnessTextureCache.has(key)
     ) {
+      this.perfCounters.cacheHits++;
       return {
         normalTexture: this.spriteNormalTextureCache.get(key)!,
         roughnessTexture: this.spriteRoughnessTextureCache.get(key)!,
         metalnessTexture: this.spriteMetalnessTextureCache.get(key)!,
       };
     }
+    this.perfCounters.cacheMisses++;
 
     const w = sourceCanvas.width;
     const h = sourceCanvas.height;

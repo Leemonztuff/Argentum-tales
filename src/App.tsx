@@ -39,6 +39,7 @@ import {
   setActiveSlotIndex,
 } from './services/saveGame';
 import { Game3DRenderer } from './engine/Game3DRenderer';
+import { GameLoop } from './engine/GameLoop';
 
 // Components
 import { GameCanvas } from './components/GameCanvas';
@@ -99,10 +100,7 @@ export default function App() {
   const isNight = timeProgress < 0.25 || timeProgress > 0.79;
 
   useEffect(() => {
-    const cycleTimer = setInterval(() => {
-      setTimeProgress((prev) => (prev + 0.002) % 1.0);
-    }, 1000);
-    return () => clearInterval(cycleTimer);
+    return () => {};
   }, []);
 
   useEffect(() => {
@@ -185,27 +183,7 @@ export default function App() {
   const [comboLastHitTime, setComboLastHitTime] = useState<number>(0);
   const [comboTimeLeftPercent, setComboTimeLeftPercent] = useState<number>(100);
 
-  // Ticks down the combo timer window smoothly
-  useEffect(() => {
-    if (comboCount <= 0) return;
-
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - comboLastHitTime;
-      const remainingMs = 3000 - elapsed;
-
-      if (remainingMs <= 0) {
-        setComboCount(0);
-        setComboTargetInstanceId(null);
-        setComboTargetName(null);
-        setComboTimeLeftPercent(0);
-      } else {
-        setComboTimeLeftPercent((remainingMs / 3000) * 100);
-      }
-    }, 50);
-
-    return () => clearInterval(timer);
-  }, [comboCount, comboLastHitTime]);
+  // Ticks down the combo timer window (handled by central GameLoop) — removed interval here
 
   const getUpdatedComboCount = (targetInstanceId: string, targetName: string) => {
     const now = Date.now();
@@ -233,18 +211,7 @@ export default function App() {
     }, 550);
   };
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - lastDashTimestamp;
-      if (elapsed < DASH_COOLDOWN_MS) {
-        setDashCooldownPercent(Math.max(0, 1 - elapsed / DASH_COOLDOWN_MS));
-      } else {
-        setDashCooldownPercent(0);
-      }
-    }, 50);
-    return () => clearInterval(interval);
-  }, [lastDashTimestamp]);
+  // Dash cooldown ticker — handled by central GameLoop (interval removed here)
 
   // Auto-Alignment State & Refs
   const [isAutoAligning, setIsAutoAligning] = useState(false);
@@ -375,17 +342,46 @@ export default function App() {
   const lastTeleportTime = useRef<number>(0);
   const mobsRef = useRef<ActiveMob[]>([]);
   mobsRef.current = activeMobs;
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameLoopRef = useRef<GameLoop | null>(null);
+  const mobAICallbackRef = useRef<(() => void) | null>(null);
+  const changeMapRef = useRef<((targetMapId: string, targetX: number, targetY: number) => void) | null>(null);
+
+  // Fresh-value refs consumed inside the single-instance game-loop callbacks
+  const comboLastHitTimeRef = useRef<number>(0);
+  const comboCountRef = useRef<number>(0);
+  const lastDashTimestampRef = useRef<number>(0);
+  const currentMapRef = useRef<GameMap>(currentMap);
+  const isNightRef = useRef<boolean>(isNight);
+  comboLastHitTimeRef.current = comboLastHitTime;
+  comboCountRef.current = comboCount;
+  lastDashTimestampRef.current = lastDashTimestamp;
+  currentMapRef.current = currentMap;
+  isNightRef.current = isNight;
 
   // --- INITIAL LOAD ---
   useEffect(() => {
     // Title screen is shown when player is null.
   }, []);
 
-  // --- AUTO SAVE ---
+  // --- AUTO SAVE (debounced 2s to avoid localStorage write per player change during combat) ---
   useEffect(() => {
-    if (player) {
-      saveGameState(player);
+    if (!player) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
     }
+    saveTimerRef.current = setTimeout(() => {
+      try {
+        saveGameState(playerRef.current ?? player);
+      } catch {
+        /* localStorage unavailable or quota exceeded — non-fatal */
+      }
+    }, 2000);
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
   }, [player]);
 
   // --- LOGGING HELPER ---
@@ -496,41 +492,44 @@ export default function App() {
     spawnMobsForMap(targetMap, player.revengeTargetTemplateId);
     addLog(`Ingresaste a: ${targetMap.name}`, 'system');
   };
+  changeMapRef.current = changeMap;
 
   // --- PLAYER MOVEMENT ---
   const handlePlayerMove = useCallback(
     (dx: number, dy: number, isAuto?: boolean) => {
-      if (!player || deathInfo) return;
+      const p = playerRef.current;
+      const map = currentMapRef.current;
+      if (!p || useUIStore.getState().deathInfo) return;
 
       if (!isAuto) {
         cancelAutoAlign();
       }
 
-      const newX = player.x + dx;
-      const newY = player.y + dy;
+      const newX = p.x + dx;
+      const newY = p.y + dy;
 
       // Check map boundary
-      if (newX < 0 || newX >= currentMap.width || newY < 0 || newY >= currentMap.height) {
+      if (newX < 0 || newX >= map.width || newY < 0 || newY >= map.height) {
         return;
       }
 
       // Check tile collision
-      const tile = currentMap.tiles[newY]?.[newX] ?? 1;
+      const tile = map.tiles[newY]?.[newX] ?? 1;
       const isBlocking = (t: number) => [1, 2, 5, 6, 7].includes(t);
       if (isBlocking(tile)) {
         return;
       }
 
       // Check NPC collision
-      const npcCollision = currentMap.npcs.find((n) => n.x === newX && n.y === newY);
+      const npcCollision = map.npcs.find((n) => n.x === newX && n.y === newY);
       if (npcCollision) return;
 
       // Check Mob collision
-      const mobCollision = activeMobs.find((m) => m.x === newX && m.y === newY);
+      const mobCollision = mobsRef.current.find((m) => m.x === newX && m.y === newY);
       if (mobCollision) return;
 
       // Determine facing direction
-      let facing: PlayerCharacter['facing'] = player.facing;
+      let facing: PlayerCharacter['facing'] = p.facing;
       if (dx > 0) facing = 'right';
       else if (dx < 0) facing = 'left';
       else if (dy > 0) facing = 'down';
@@ -538,10 +537,10 @@ export default function App() {
 
       setPlayer((prev) => {
         if (!prev) return null;
-        
-        const prevTile = currentMap.tiles[Math.floor(prev.y)]?.[Math.floor(prev.x)] ?? 0;
-        const nextTile = currentMap.tiles[Math.floor(newY)]?.[Math.floor(newX)] ?? 0;
-        
+
+        const prevTile = map.tiles[Math.floor(prev.y)]?.[Math.floor(prev.x)] ?? 0;
+        const nextTile = map.tiles[Math.floor(newY)]?.[Math.floor(newX)] ?? 0;
+
         if (prevTile !== 8 && nextTile === 8) {
           addLog('🛡️ Estás en un camino seguro. La agresión de los monstruos se ha reducido.', 'system');
         } else if (prevTile === 8 && nextTile !== 8) {
@@ -557,8 +556,8 @@ export default function App() {
       });
 
       // Auto-target nearest mob in straight line
-      const alignedMob = activeMobs.find((m) => {
-        const weaponRange = player.equipment.weapon?.range || 1;
+      const alignedMob = mobsRef.current.find((m) => {
+        const weaponRange = p.equipment.weapon?.range || 1;
         const res = CombatEngine.isAligned(newX, newY, m.x, m.y, weaponRange);
         return res.aligned;
       });
@@ -568,13 +567,13 @@ export default function App() {
 
       // Check Portal (only if we didn't just teleport)
       if (Date.now() - lastTeleportTime.current > 1000) {
-        const portal = currentMap.portals.find((p) => p.x === newX && p.y === newY);
+        const portal = map.portals.find((pp) => pp.x === newX && pp.y === newY);
         if (portal) {
-          changeMap(portal.targetMapId, portal.targetX, portal.targetY);
+          changeMapRef.current?.(portal.targetMapId, portal.targetX, portal.targetY);
         }
       }
     },
-    [player, currentMap, activeMobs, deathInfo, cancelAutoAlign]
+    [cancelAutoAlign]
   );
 
   // --- RECOGIDO AUTOMÁTICO (Auto-Pickup) DE RECURSOS DEL MAPA ---
@@ -625,7 +624,8 @@ export default function App() {
   }, [player?.x, player?.y, gameSettings.autoPickup, gameSettings.autoPickupFilters, gameSettings.showLootToasts, currentMap, deathInfo, addToast]);
 
   const handlePlayerPositionChange = useCallback((x: number, y: number, facing: 'up' | 'down' | 'left' | 'right') => {
-    if (!player || deathInfo) return;
+    const p = playerRef.current;
+    if (!p || useUIStore.getState().deathInfo) return;
 
     setPlayer((prev) => {
       if (!prev) return null;
@@ -638,8 +638,9 @@ export default function App() {
     });
 
     // Auto-target nearest mob in straight line
-    const alignedMob = activeMobs.find((m) => {
-      const weaponRange = player.equipment.weapon?.range || 1;
+    const map = currentMapRef.current;
+    const weaponRange = p.equipment.weapon?.range || 1;
+    const alignedMob = mobsRef.current.find((m) => {
       const res = CombatEngine.isAligned(x, y, m.x, m.y, weaponRange);
       return res.aligned;
     });
@@ -649,12 +650,12 @@ export default function App() {
 
     // Check Portal (only if we didn't just teleport)
     if (Date.now() - lastTeleportTime.current > 1000) {
-      const portal = currentMap.portals.find((p) => p.x === x && p.y === y);
+      const portal = map.portals.find((pp) => pp.x === x && pp.y === y);
       if (portal) {
-        changeMap(portal.targetMapId, portal.targetX, portal.targetY);
+        changeMapRef.current?.(portal.targetMapId, portal.targetX, portal.targetY);
       }
     }
-  }, [player, currentMap, activeMobs, deathInfo]);
+  }, []);
 
   const handleDash = useCallback(() => {
     if (!player || deathInfo) return;
@@ -844,23 +845,7 @@ export default function App() {
     return { label: null, action: () => {} };
   };
 
-  // --- ATTACK COOLDOWN TICKER ---
-  useEffect(() => {
-    if (!player) return;
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const attackIntervalMs = CombatEngine.calculateAttackInterval(player);
-      const elapsed = now - player.lastAttackTimestamp;
-
-      if (elapsed >= attackIntervalMs) {
-        setAttackCooldownPercent(0);
-      } else {
-        setAttackCooldownPercent(1 - elapsed / attackIntervalMs);
-      }
-    }, 40);
-
-    return () => clearInterval(interval);
-  }, [player]);
+  // --- ATTACK COOLDOWN TICKER (handled by central GameLoop) ---
 
   // --- COMBAT: PLAYER EXECUTES ATTACK ---
   const handlePlayerAttack = () => {
@@ -1415,134 +1400,196 @@ export default function App() {
     }
   };
 
-  // --- MOB AI & ATTACK LOOP ---
-  useEffect(() => {
-    if (!player || deathInfo) return;
+  // --- MOB AI & ATTACK LOOP (callback wired into central GameLoop via ref) ---
+  mobAICallbackRef.current = () => {
+    const now = Date.now();
+    const p = playerRef.current;
+    if (!p) return;
+    if (useUIStore.getState().deathInfo) return;
+    const map = currentMapRef.current;
+    const night = isNightRef.current;
 
-    const aiInterval = setInterval(() => {
-      const now = Date.now();
-      const p = playerRef.current;
-      if (!p) return;
+    setActiveMobs((currentMobs) =>
+      currentMobs.map((mob) => {
+        const template = MOBS[mob.templateId];
+        if (!template) return mob;
 
-      setActiveMobs((currentMobs) =>
-        currentMobs.map((mob) => {
-          const template = MOBS[mob.templateId];
-          if (!template) return mob;
+        const distToPlayer = Math.hypot(mob.x - p.x, mob.y - p.y);
+        const playerTile = map.tiles[Math.floor(p.y)]?.[Math.floor(p.x)] ?? 0;
+        const playerOnPath = playerTile === 8;
+        const baseAgroRange = mob.isBoss ? (playerOnPath ? 2 : 7) : (playerOnPath ? 1 : 5);
+        const agroRange = night ? baseAgroRange + 2 : baseAgroRange;
 
-          const distToPlayer = Math.hypot(mob.x - p.x, mob.y - p.y);
-          const playerTile = currentMap.tiles[Math.floor(p.y)]?.[Math.floor(p.x)] ?? 0;
-          const playerOnPath = playerTile === 8;
-          const baseAgroRange = mob.isBoss ? (playerOnPath ? 2 : 7) : (playerOnPath ? 1 : 5);
-          const agroRange = isNight ? baseAgroRange + 2 : baseAgroRange;
+        // If stealthed, mobs lose agro (§5.7)
+        if (p.isStealthed) {
+          return { ...mob, state: 'idle', lastAgroTime: undefined };
+        }
 
-          // If stealthed, mobs lose agro (§5.7)
-          if (p.isStealthed) {
-            return { ...mob, state: 'idle', lastAgroTime: undefined };
-          }
+        // Short-term aggro memory (3 seconds)
+        const hasAgroMemory = mob.lastAgroTime !== undefined && (now - mob.lastAgroTime < 3000);
+        const hasAgroRange = distToPlayer <= agroRange;
+        const hasAgro = hasAgroRange || hasAgroMemory;
 
-          // Short-term aggro memory (3 seconds)
-          const hasAgroMemory = mob.lastAgroTime !== undefined && (now - mob.lastAgroTime < 3000);
-          const hasAgroRange = distToPlayer <= agroRange;
-          const hasAgro = hasAgroRange || hasAgroMemory;
+        const updatedLastAgroTime = hasAgroRange ? now : mob.lastAgroTime;
 
-          const updatedLastAgroTime = hasAgroRange ? now : mob.lastAgroTime;
+        // Check if aligned and in range to attack player
+        const alignCheck = CombatEngine.isAligned(mob.x, mob.y, p.x, p.y, template.range);
 
-          // Check if aligned and in range to attack player
-          const alignCheck = CombatEngine.isAligned(mob.x, mob.y, p.x, p.y, template.range);
-
-          if (hasAgro && alignCheck.aligned && now - mob.lastAttackTime >= mob.attackIntervalMs) {
-            // Mob executes attack against player (nocturnal bonus at night)
-            const effectiveTemplate = isNight
-              ? {
-                  ...template,
-                  minHit: Math.round(template.minHit * 1.15),
-                  maxHit: Math.round(template.maxHit * 1.15),
-                  minHitToPlayer: template.minHitToPlayer ? Math.round(template.minHitToPlayer * 1.15) : undefined,
-                  maxHitToPlayer: template.maxHitToPlayer ? Math.round(template.maxHitToPlayer * 1.15) : undefined,
-                }
-              : template;
-            const result = CombatEngine.executeMobAttack(effectiveTemplate, p);
-
-            if (result.blocked) {
-              sound.playShieldBlock();
-              addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y);
-              addLog(result.message, 'block');
-            } else if (result.hit) {
-              sound.playHitImpact();
-              if (result.isCritical) {
-                rendererRef.current?.triggerCriticalHitShake(false, 0.78, 480, p.x, p.y);
-                triggerImpactEffect('receive');
-                addFloatingText(`¡CRÍTICO -${result.damage}! 💀`, '#f43f5e', p.x, p.y);
-                addLog(result.message, 'mob_hit');
-              } else {
-                rendererRef.current?.triggerScreenShake(0.35, 250);
-                addFloatingText(`-${result.damage}`, '#ef4444', p.x, p.y);
-                addLog(result.message, 'mob_hit');
+        if (hasAgro && alignCheck.aligned && now - mob.lastAttackTime >= mob.attackIntervalMs) {
+          // Mob executes attack against player (nocturnal bonus at night)
+          const effectiveTemplate = night
+            ? {
+                ...template,
+                minHit: Math.round(template.minHit * 1.15),
+                maxHit: Math.round(template.maxHit * 1.15),
+                minHitToPlayer: template.minHitToPlayer ? Math.round(template.minHitToPlayer * 1.15) : undefined,
+                maxHitToPlayer: template.maxHitToPlayer ? Math.round(template.maxHitToPlayer * 1.15) : undefined,
               }
+            : template;
+          const result = CombatEngine.executeMobAttack(effectiveTemplate, p);
 
-              const newPlayerHp = p.currentHp - result.damage;
-              if (newPlayerHp <= 0) {
-                // Player Defeat (§5.8)
-                sound.playPlayerDeath();
-                const goldPenalty = Math.round(p.gold * 0.1);
-                useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
-                setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
-              } else {
-                setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
-              }
+          if (result.blocked) {
+            sound.playShieldBlock();
+            addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y);
+            addLog(result.message, 'block');
+          } else if (result.hit) {
+            sound.playHitImpact();
+            if (result.isCritical) {
+              rendererRef.current?.triggerCriticalHitShake(false, 0.78, 480, p.x, p.y);
+              triggerImpactEffect('receive');
+              addFloatingText(`¡CRÍTICO -${result.damage}! 💀`, '#f43f5e', p.x, p.y);
+              addLog(result.message, 'mob_hit');
             } else {
-              addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y);
-              addLog(result.message, 'player_miss');
+              rendererRef.current?.triggerScreenShake(0.35, 250);
+              addFloatingText(`-${result.damage}`, '#ef4444', p.x, p.y);
+              addLog(result.message, 'mob_hit');
             }
 
+            const newPlayerHp = p.currentHp - result.damage;
+            if (newPlayerHp <= 0) {
+              // Player Defeat (§5.8)
+              sound.playPlayerDeath();
+              const goldPenalty = Math.round(p.gold * 0.1);
+              useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
+              setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
+            } else {
+              setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
+            }
+          } else {
+            addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y);
+            addLog(result.message, 'player_miss');
+          }
+
+          return {
+            ...mob,
+            lastAttackTime: now,
+            state: 'attacking',
+            lastAgroTime: updatedLastAgroTime,
+          };
+        }
+
+        // Chase player if in agro range or retains short-term aggro memory
+        if (hasAgro && distToPlayer > 1) {
+          let nextX = mob.x;
+          let nextY = mob.y;
+
+          const dx = p.x - mob.x;
+          const dy = p.y - mob.y;
+
+          // Simple pathing towards alignment with player
+          if (Math.abs(dx) > Math.abs(dy)) {
+            nextX += dx > 0 ? 1 : -1;
+          } else if (dy !== 0) {
+            nextY += dy > 0 ? 1 : -1;
+          }
+
+          // Check tile collision for mob
+          const tile = map.tiles[nextY]?.[nextX] ?? 1;
+          if (tile !== 1) {
             return {
               ...mob,
-              lastAttackTime: now,
-              state: 'attacking',
+              x: nextX,
+              y: nextY,
+              state: 'chasing',
               lastAgroTime: updatedLastAgroTime,
             };
           }
+        }
 
-          // Chase player if in agro range or retains short-term aggro memory
-          if (hasAgro && distToPlayer > 1) {
-            let nextX = mob.x;
-            let nextY = mob.y;
+        const nextState = hasAgro ? mob.state : 'idle';
+        return {
+          ...mob,
+          lastAgroTime: updatedLastAgroTime,
+          state: nextState,
+        };
+      })
+    );
+  };
 
-            const dx = p.x - mob.x;
-            const dy = p.y - mob.y;
+  // --- CENTRAL GAME LOOP SETUP ---
+  // One requestAnimationFrame drives all timed systems (day/night, combo,
+  // dash, attack cooldown, mob AI) via accumulator cadences — replacing the
+  // scattered React setInterval timers.
+  useEffect(() => {
+    const loop = new GameLoop();
 
-            // Simple pathing towards alignment with player
-            if (Math.abs(dx) > Math.abs(dy)) {
-              nextX += dx > 0 ? 1 : -1;
-            } else if (dy !== 0) {
-              nextY += dy > 0 ? 1 : -1;
-            }
+    // Day/Night cycle (~1s cadence)
+    loop.register('dayNight', 1000, () => {
+      setTimeProgress((prev) => (prev + 0.002) % 1.0);
+    });
 
-            // Check tile collision for mob
-            const tile = currentMap.tiles[nextY]?.[nextX] ?? 1;
-            if (tile !== 1) {
-              return {
-                ...mob,
-                x: nextX,
-                y: nextY,
-                state: 'chasing',
-                lastAgroTime: updatedLastAgroTime,
-              };
-            }
-          }
+    // Combo timer window (50ms cadence)
+    loop.register('combo', 50, () => {
+      if (comboCountRef.current <= 0) return;
+      const elapsed = Date.now() - comboLastHitTimeRef.current;
+      const remainingMs = 3000 - elapsed;
+      if (remainingMs <= 0) {
+        setComboCount(0);
+        setComboTargetInstanceId(null);
+        setComboTargetName(null);
+        setComboTimeLeftPercent(0);
+      } else {
+        setComboTimeLeftPercent((remainingMs / 3000) * 100);
+      }
+    });
 
-          const nextState = hasAgro ? mob.state : 'idle';
-          return {
-            ...mob,
-            lastAgroTime: updatedLastAgroTime,
-            state: nextState,
-          };
-        })
-      );
-    }, 700);
+    // Dash cooldown (50ms cadence)
+    loop.register('dash', 50, () => {
+      const elapsed = Date.now() - lastDashTimestampRef.current;
+      if (elapsed < DASH_COOLDOWN_MS) {
+        setDashCooldownPercent(Math.max(0, 1 - elapsed / DASH_COOLDOWN_MS));
+      } else {
+        setDashCooldownPercent(0);
+      }
+    });
 
-    return () => clearInterval(aiInterval);
-  }, [currentMap, deathInfo]);
+    // Attack cooldown (40ms cadence)
+    loop.register('attackCooldown', 40, () => {
+      const p = playerRef.current;
+      if (!p) return;
+      const attackIntervalMs = CombatEngine.calculateAttackInterval(p);
+      const elapsed = Date.now() - p.lastAttackTimestamp;
+      if (elapsed >= attackIntervalMs) {
+        setAttackCooldownPercent(0);
+      } else {
+        setAttackCooldownPercent(1 - elapsed / attackIntervalMs);
+      }
+    });
+
+    // Mob AI (700ms cadence)
+    loop.register('mobAI', 700, () => {
+      mobAICallbackRef.current?.();
+    });
+
+    gameLoopRef.current = loop;
+    loop.start();
+
+    return () => {
+      loop.dispose();
+      gameLoopRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- QUICK POTION DRINK ---
   const handleUsePotion = (type: 'hp' | 'mp') => {
