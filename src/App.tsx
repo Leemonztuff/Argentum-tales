@@ -23,22 +23,24 @@ import { sound } from './services/sound';
 import { contentRegistry } from './services/ContentRegistry';
 import {
   addItemToInventory,
-  consolidateInventory,
   shouldAutoPickupItem,
-  DEFAULT_AUTO_PICKUP_FILTERS,
 } from './utils/inventoryUtils';
 import {
   createInitialPlayer,
   loadGameState,
   saveGameState,
   clearGameState,
-  loadCharacterSlots,
   saveCharacterToSlot,
-  deleteCharacterSlot,
-  getActiveSlotIndex,
-  setActiveSlotIndex,
 } from './services/saveGame';
 import { Game3DRenderer } from './engine/Game3DRenderer';
+import { GameLoop } from './engine/GameLoop';
+import { useDayNightCycle } from './hooks/useDayNightCycle';
+import { useGameSettings } from './hooks/useGameSettings';
+import { useCharacterSlots } from './hooks/useCharacterSlots';
+import { usePlayerMovement } from './hooks/usePlayerMovement';
+import { useMapEntities } from './hooks/useMapEntities';
+import { useCombatCounters, DASH_COOLDOWN_MS } from './hooks/useCombatCounters';
+import { useModalActions } from './hooks/useModalActions';
 
 // Components
 import { GameCanvas } from './components/GameCanvas';
@@ -57,7 +59,7 @@ import { Minimap } from './components/Minimap';
 import { OrientationPrompt } from './components/OrientationPrompt';
 import { HelpModal } from './components/HelpModal';
 import { DataStudioModal } from './components/DataStudioModal';
-import { SettingsModal, GameSettingsState } from './components/SettingsModal';
+import { SettingsModal } from './components/SettingsModal';
 import { TitleScreen } from './components/TitleScreen';
 import { ToastNotification, ToastMessage } from './components/ToastNotification';
 import { useUIStore, ModalId } from './ui';
@@ -65,51 +67,9 @@ import { useUIStore, ModalId } from './ui';
 export default function App() {
   // Game Setup / Character State
   const [player, setPlayer] = useState<PlayerCharacter | null>(null);
-  const [isCharacterCreating, setIsCharacterCreating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
-  const [characterSlots, setCharacterSlots] = useState(() => loadCharacterSlots());
-  const [activeSlotIndex, setActiveSlotIndexState] = useState(() => getActiveSlotIndex());
-  const [creatingSlotIndex, setCreatingSlotIndex] = useState<number | null>(null);
-
-  const handleSelectSlot = (index: number) => {
-    const char = characterSlots[index];
-    if (char) {
-      setActiveSlotIndexState(index);
-      setActiveSlotIndex(index);
-      setPlayer(char);
-      const map = MAPS[char.currentMapId] || MAPS.pueblo_inicial;
-      setCurrentMap(map);
-      spawnMobsForMap(map, char.revengeTargetTemplateId);
-    }
-  };
-
-  const handleDeleteSlot = (index: number) => {
-    const updated = deleteCharacterSlot(index);
-    setCharacterSlots([...updated]);
-  };
-
-  const handleStartCreateCharacter = (index: number) => {
-    setCreatingSlotIndex(index);
-    setIsCharacterCreating(true);
-  };
-
-  // Day-Night Cycle State
-  const [timeProgress, setTimeProgress] = useState<number>(0.35); // 0.0 to 1.0 (0.35 = ~08:24 AM)
-  const isNight = timeProgress < 0.25 || timeProgress > 0.79;
-
-  useEffect(() => {
-    const cycleTimer = setInterval(() => {
-      setTimeProgress((prev) => (prev + 0.002) % 1.0);
-    }, 1000);
-    return () => clearInterval(cycleTimer);
-  }, []);
-
-  useEffect(() => {
-    if (rendererRef.current) {
-      rendererRef.current.updateLightingByTime(timeProgress, isNight);
-    }
-  }, [timeProgress, isNight]);
+  // Day/Night cycle, lighting sync and isNight are owned by useDayNightCycle.
 
   // Map & Entity State
   const [currentMap, setCurrentMap] = useState<GameMap>(MAPS.pueblo_inicial);
@@ -131,120 +91,13 @@ export default function App() {
   const toggleDataStudio = () => toggleModal('dataStudio');
   const toggleSettings = () => toggleModal('settings');
   const closeAllModals = () => useUIStore.getState().closeAllModals();
-  const [gameSettings, setGameSettings] = useState<GameSettingsState>(() => {
-    const saved = localStorage.getItem('argentum_game_settings');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          autoPickup: parsed.autoPickup ?? true,
-          autoPickupFilters: parsed.autoPickupFilters || DEFAULT_AUTO_PICKUP_FILTERS,
-          critShake: parsed.critShake ?? true,
-          showLootToasts: parsed.showLootToasts ?? true,
-          autoAlignGrid: parsed.autoAlignGrid ?? false,
-          soundMuted: parsed.soundMuted ?? false,
-        };
-      } catch (e) {
-        // fallback
-      }
-    }
-    return {
-      autoPickup: true,
-      autoPickupFilters: DEFAULT_AUTO_PICKUP_FILTERS,
-      critShake: true,
-      showLootToasts: true,
-      autoAlignGrid: false,
-      soundMuted: false,
-    };
-  });
-
-  const updateGameSettings = useCallback((newSettings: Partial<GameSettingsState>) => {
-    setGameSettings((prev) => {
-      const updated = { ...prev, ...newSettings };      localStorage.setItem('argentum_game_settings', JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const { gameSettings, updateGameSettings } = useGameSettings();
   const activeShop = useUIStore((s) => s.activeShop);
   const activeCrafting = useUIStore((s) => s.activeCrafting);
   const activeDialogueNpc = useUIStore((s) => s.activeDialogueNpc);
   const deathInfo = useUIStore((s) => s.deathInfo);
 
-  // Combat Timing & Critical Impact State
-  const [attackCooldownPercent, setAttackCooldownPercent] = useState(0);
-  const [lastSpellTimestamps, setLastSpellTimestamps] = useState<Record<string, number>>({});
-  const [lastDashTimestamp, setLastDashTimestamp] = useState<number>(0);
-  const DASH_COOLDOWN_MS = 2500;
-  const [dashCooldownPercent, setDashCooldownPercent] = useState<number>(0);
-
-  const [critEffect, setCritEffect] = useState<{ type: 'deal' | 'receive'; key: number } | null>(null);
-
-  // Combo Counter state
-  const [comboCount, setComboCount] = useState<number>(0);
-  const [comboTargetInstanceId, setComboTargetInstanceId] = useState<string | null>(null);
-  const [comboTargetName, setComboTargetName] = useState<string | null>(null);
-  const [comboLastHitTime, setComboLastHitTime] = useState<number>(0);
-  const [comboTimeLeftPercent, setComboTimeLeftPercent] = useState<number>(100);
-
-  // Ticks down the combo timer window smoothly
-  useEffect(() => {
-    if (comboCount <= 0) return;
-
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - comboLastHitTime;
-      const remainingMs = 3000 - elapsed;
-
-      if (remainingMs <= 0) {
-        setComboCount(0);
-        setComboTargetInstanceId(null);
-        setComboTargetName(null);
-        setComboTimeLeftPercent(0);
-      } else {
-        setComboTimeLeftPercent((remainingMs / 3000) * 100);
-      }
-    }, 50);
-
-    return () => clearInterval(timer);
-  }, [comboCount, comboLastHitTime]);
-
-  const getUpdatedComboCount = (targetInstanceId: string, targetName: string) => {
-    const now = Date.now();
-    const isSameMob = comboTargetInstanceId === targetInstanceId;
-    const isWithinTime = now - comboLastHitTime <= 3000;
-
-    let nextCombo = 1;
-    if (isSameMob && isWithinTime) {
-      nextCombo = comboCount + 1;
-    }
-
-    setComboCount(nextCombo);
-    setComboTargetInstanceId(targetInstanceId);
-    setComboTargetName(targetName);
-    setComboLastHitTime(now);
-
-    return nextCombo;
-  };
-
-  const triggerImpactEffect = (type: 'deal' | 'receive') => {
-    const key = Date.now();
-    setCritEffect({ type, key });
-    setTimeout(() => {
-      setCritEffect((prev) => (prev?.key === key ? null : prev));
-    }, 550);
-  };
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - lastDashTimestamp;
-      if (elapsed < DASH_COOLDOWN_MS) {
-        setDashCooldownPercent(Math.max(0, 1 - elapsed / DASH_COOLDOWN_MS));
-      } else {
-        setDashCooldownPercent(0);
-      }
-    }, 50);
-    return () => clearInterval(interval);
-  }, [lastDashTimestamp]);
+  // Combat timing, crit impact and combo counters are owned by useCombatCounters.
 
   // Auto-Alignment State & Refs
   const [isAutoAligning, setIsAutoAligning] = useState(false);
@@ -375,207 +228,112 @@ export default function App() {
   const lastTeleportTime = useRef<number>(0);
   const mobsRef = useRef<ActiveMob[]>([]);
   mobsRef.current = activeMobs;
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameLoopRef = useRef<GameLoop | null>(null);
+  const mobAICallbackRef = useRef<(() => void) | null>(null);
+  const changeMapRef = useRef<((targetMapId: string, targetX: number, targetY: number) => void) | null>(null);
+
+  // Fresh-value ref: currentMap for single-instance game-loop callbacks
+  const currentMapRef = useRef<GameMap>(currentMap);
+  currentMapRef.current = currentMap;
+
+  // Combat counters (cooldowns, crit, combo) + their GameLoop cadences
+  const {
+    attackCooldownPercent,
+    dashCooldownPercent,
+    critEffect,
+    comboCount,
+    comboTargetName,
+    comboTimeLeftPercent,
+    comboCountRef,
+    setComboCount,
+    setComboTargetInstanceId,
+    setComboTargetName,
+    lastDashTimestamp,
+    setLastDashTimestamp,
+    lastDashTimestampRef,
+    getUpdatedComboCount,
+    triggerImpactEffect,
+    tickCombo,
+    tickDash,
+    tickAttackCooldown,
+  } = useCombatCounters({ playerRef });
+
+  // Spell cast cooldown tracking (kept in App; consumed by handleCastSpell)
+  const [lastSpellTimestamps, setLastSpellTimestamps] = useState<Record<string, number>>({});
+
+  // Day/Night cycle (owns timeProgress, isNight, isNightRef, lighting sync)
+  const { timeProgress, isNight, isNightRef, advanceDayNight } = useDayNightCycle({ rendererRef });
 
   // --- INITIAL LOAD ---
   useEffect(() => {
     // Title screen is shown when player is null.
   }, []);
 
-  // --- AUTO SAVE ---
+  // --- AUTO SAVE (debounced 2s to avoid localStorage write per player change during combat) ---
   useEffect(() => {
-    if (player) {
-      saveGameState(player);
+    if (!player) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
     }
+    saveTimerRef.current = setTimeout(() => {
+      try {
+        saveGameState(playerRef.current ?? player);
+      } catch {
+        /* localStorage unavailable or quota exceeded — non-fatal */
+      }
+    }, 2000);
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
   }, [player]);
 
-  // --- LOGGING HELPER ---
-  const addLog = useCallback((text: string, type: CombatLogEntry['type']) => {
-    const now = new Date();
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-    const newEntry: CombatLogEntry = {
-      id: Math.random().toString(36).substring(2, 9),
-      timestamp: timeStr,
-      text,
-      type,
-    };
-    setCombatLogs((prev) => [...prev.slice(-40), newEntry]);
-  }, []);
+  // --- LOGGING, MAP ENTITIES & MAP CHANGE HELPERS ---
+  const { addLog, addToast, addFloatingText, handleCycleTarget, spawnMobsForMap, changeMap } = useMapEntities({
+    activeMobs,
+    playerRef,
+    lastTeleportTime,
+    changeMapRef,
+    setActiveMobs,
+    setCurrentMap,
+    setPlayer,
+    setSelectedTarget,
+    setCombatLogs,
+    setToasts,
+    setFloatingTexts,
+  });
 
-  // --- TOAST HELPER ---
-  const addToast = useCallback((title: string, subtitle?: string, icon?: string, type?: ToastMessage['type']) => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev.slice(-3), { id, title, subtitle, icon, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
-  }, []);
-
-  // --- CYCLE TARGET (TAB) ---
-  const handleCycleTarget = useCallback(() => {
-    if (!activeMobs.length) {
-      setSelectedTarget(null);
-      return;
-    }
-    setSelectedTarget((prev) => {
-      const currentMob = prev?.type === 'mob' ? prev.mob : null;
-      if (!currentMob) return { type: 'mob', mob: activeMobs[0] };
-      const currentIndex = activeMobs.findIndex((m) => m.instanceId === currentMob.instanceId);
-      const nextIndex = (currentIndex + 1) % activeMobs.length;
-      return { type: 'mob', mob: activeMobs[nextIndex] };
-    });
-  }, [activeMobs]);
-  const addFloatingText = useCallback((text: string, color: string, x: number, y: number, durationMs = 800) => {
-    const newText: FloatingText = {
-      id: Math.random().toString(36).substring(2, 9),
-      text,
-      color,
-      x,
-      y,
-      created: Date.now(),
-      durationMs,
-    };
-    setFloatingTexts((prev) => [...prev, newText]);
-    setTimeout(() => {
-      setFloatingTexts((prev) => prev.filter((t) => t.id !== newText.id));
-    }, durationMs);
-  }, []);
-
-  // --- MAP SPAWN LOGIC ---
-  const spawnMobsForMap = (map: GameMap, revengeTemplateId?: string) => {
-    const spawned: ActiveMob[] = [];
-    map.mobSpawns.forEach((spawn, idx) => {
-      const template = MOBS[spawn.mobId];
-      if (!template) return;
-
-      const isRevenge = revengeTemplateId === template.id;
-
-      spawned.push({
-        instanceId: `mob_${map.id}_${idx}_${Date.now()}`,
-        templateId: template.id,
-        name: template.name,
-        sprite: template.sprite,
-        color: template.color,
-        x: spawn.x,
-        y: spawn.y,
-        targetX: spawn.x,
-        targetY: spawn.y,
-        currentHp: template.maxHp,
-        maxHp: template.maxHp,
-        lastAttackTime: 0,
-        attackIntervalMs: template.intervalMs,
-        isBoss: !!template.isBoss,
-        isRevengeTarget: isRevenge,
-        facing: 'down',
-        spawnX: spawn.x,
-        spawnY: spawn.y,
-        state: 'idle',
-      });
-    });
-    setActiveMobs(spawned);
-  };
-
-  // --- MAP CHANGE & PORTAL TRANSITION ---
-  const changeMap = (targetMapId: string, targetX: number, targetY: number) => {
-    const targetMap = MAPS[targetMapId];
-    if (!targetMap || !player) return;
-
-    lastTeleportTime.current = Date.now();
-    sound.playPotion();
-    setCurrentMap(targetMap);
-    setPlayer((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        currentMapId: targetMapId,
-        x: targetX,
-        y: targetY,
-      };
-    });
-
-    setSelectedTarget(null);
-    spawnMobsForMap(targetMap, player.revengeTargetTemplateId);
-    addLog(`Ingresaste a: ${targetMap.name}`, 'system');
-  };
+  // Character select/creation flow (title screen slots)
+  const {
+    characterSlots,
+    activeSlotIndex,
+    creatingSlotIndex,
+    isCharacterCreating,
+    handleSelectSlot,
+    handleDeleteSlot,
+    handleStartCreateCharacter,
+    setIsCharacterCreating,
+    setCharacterSlots,
+    setActiveSlotIndexState,
+    setCreatingSlotIndex,
+    saveActiveSlot,
+    refreshSlots,
+  } = useCharacterSlots({ setPlayer, setCurrentMap, spawnMobsForMap });
 
   // --- PLAYER MOVEMENT ---
-  const handlePlayerMove = useCallback(
-    (dx: number, dy: number, isAuto?: boolean) => {
-      if (!player || deathInfo) return;
-
-      if (!isAuto) {
-        cancelAutoAlign();
-      }
-
-      const newX = player.x + dx;
-      const newY = player.y + dy;
-
-      // Check map boundary
-      if (newX < 0 || newX >= currentMap.width || newY < 0 || newY >= currentMap.height) {
-        return;
-      }
-
-      // Check tile collision
-      const tile = currentMap.tiles[newY]?.[newX] ?? 1;
-      const isBlocking = (t: number) => [1, 2, 5, 6, 7].includes(t);
-      if (isBlocking(tile)) {
-        return;
-      }
-
-      // Check NPC collision
-      const npcCollision = currentMap.npcs.find((n) => n.x === newX && n.y === newY);
-      if (npcCollision) return;
-
-      // Check Mob collision
-      const mobCollision = activeMobs.find((m) => m.x === newX && m.y === newY);
-      if (mobCollision) return;
-
-      // Determine facing direction
-      let facing: PlayerCharacter['facing'] = player.facing;
-      if (dx > 0) facing = 'right';
-      else if (dx < 0) facing = 'left';
-      else if (dy > 0) facing = 'down';
-      else if (dy < 0) facing = 'up';
-
-      setPlayer((prev) => {
-        if (!prev) return null;
-        
-        const prevTile = currentMap.tiles[Math.floor(prev.y)]?.[Math.floor(prev.x)] ?? 0;
-        const nextTile = currentMap.tiles[Math.floor(newY)]?.[Math.floor(newX)] ?? 0;
-        
-        if (prevTile !== 8 && nextTile === 8) {
-          addLog('🛡️ Estás en un camino seguro. La agresión de los monstruos se ha reducido.', 'system');
-        } else if (prevTile === 8 && nextTile !== 8) {
-          addLog('⚠️ Has salido del camino seguro. Los monstruos recuperan su agresividad natural.', 'player_miss');
-        }
-
-        return {
-          ...prev,
-          x: newX,
-          y: newY,
-          facing,
-        };
-      });
-
-      // Auto-target nearest mob in straight line
-      const alignedMob = activeMobs.find((m) => {
-        const weaponRange = player.equipment.weapon?.range || 1;
-        const res = CombatEngine.isAligned(newX, newY, m.x, m.y, weaponRange);
-        return res.aligned;
-      });
-      if (alignedMob) {
-        setSelectedTarget({ type: 'mob', mob: alignedMob });
-      }
-
-      // Check Portal (only if we didn't just teleport)
-      if (Date.now() - lastTeleportTime.current > 1000) {
-        const portal = currentMap.portals.find((p) => p.x === newX && p.y === newY);
-        if (portal) {
-          changeMap(portal.targetMapId, portal.targetX, portal.targetY);
-        }
-      }
-    },
-    [player, currentMap, activeMobs, deathInfo, cancelAutoAlign]
-  );
+  const { handlePlayerMove, handlePlayerPositionChange } = usePlayerMovement({
+    playerRef,
+    currentMapRef,
+    mobsRef,
+    lastTeleportTime,
+    changeMapRef,
+    setPlayer,
+    setSelectedTarget,
+    addLog,
+    cancelAutoAlign,
+  });
 
   // --- RECOGIDO AUTOMÁTICO (Auto-Pickup) DE RECURSOS DEL MAPA ---
   useEffect(() => {
@@ -623,38 +381,6 @@ export default function App() {
       }
     });
   }, [player?.x, player?.y, gameSettings.autoPickup, gameSettings.autoPickupFilters, gameSettings.showLootToasts, currentMap, deathInfo, addToast]);
-
-  const handlePlayerPositionChange = useCallback((x: number, y: number, facing: 'up' | 'down' | 'left' | 'right') => {
-    if (!player || deathInfo) return;
-
-    setPlayer((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        x,
-        y,
-        facing,
-      };
-    });
-
-    // Auto-target nearest mob in straight line
-    const alignedMob = activeMobs.find((m) => {
-      const weaponRange = player.equipment.weapon?.range || 1;
-      const res = CombatEngine.isAligned(x, y, m.x, m.y, weaponRange);
-      return res.aligned;
-    });
-    if (alignedMob) {
-      setSelectedTarget({ type: 'mob', mob: alignedMob });
-    }
-
-    // Check Portal (only if we didn't just teleport)
-    if (Date.now() - lastTeleportTime.current > 1000) {
-      const portal = currentMap.portals.find((p) => p.x === x && p.y === y);
-      if (portal) {
-        changeMap(portal.targetMapId, portal.targetX, portal.targetY);
-      }
-    }
-  }, [player, currentMap, activeMobs, deathInfo]);
 
   const handleDash = useCallback(() => {
     if (!player || deathInfo) return;
@@ -844,23 +570,7 @@ export default function App() {
     return { label: null, action: () => {} };
   };
 
-  // --- ATTACK COOLDOWN TICKER ---
-  useEffect(() => {
-    if (!player) return;
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const attackIntervalMs = CombatEngine.calculateAttackInterval(player);
-      const elapsed = now - player.lastAttackTimestamp;
-
-      if (elapsed >= attackIntervalMs) {
-        setAttackCooldownPercent(0);
-      } else {
-        setAttackCooldownPercent(1 - elapsed / attackIntervalMs);
-      }
-    }, 40);
-
-    return () => clearInterval(interval);
-  }, [player]);
+  // --- ATTACK COOLDOWN TICKER (handled by central GameLoop) ---
 
   // --- COMBAT: PLAYER EXECUTES ATTACK ---
   const handlePlayerAttack = () => {
@@ -1415,134 +1125,165 @@ export default function App() {
     }
   };
 
-  // --- MOB AI & ATTACK LOOP ---
-  useEffect(() => {
-    if (!player || deathInfo) return;
+  // --- MOB AI & ATTACK LOOP (callback wired into central GameLoop via ref) ---
+  mobAICallbackRef.current = () => {
+    const now = Date.now();
+    const p = playerRef.current;
+    if (!p) return;
+    if (useUIStore.getState().deathInfo) return;
+    const map = currentMapRef.current;
+    const night = isNightRef.current;
 
-    const aiInterval = setInterval(() => {
-      const now = Date.now();
-      const p = playerRef.current;
-      if (!p) return;
+    setActiveMobs((currentMobs) =>
+      currentMobs.map((mob) => {
+        const template = MOBS[mob.templateId];
+        if (!template) return mob;
 
-      setActiveMobs((currentMobs) =>
-        currentMobs.map((mob) => {
-          const template = MOBS[mob.templateId];
-          if (!template) return mob;
+        const distToPlayer = Math.hypot(mob.x - p.x, mob.y - p.y);
+        const playerTile = map.tiles[Math.floor(p.y)]?.[Math.floor(p.x)] ?? 0;
+        const playerOnPath = playerTile === 8;
+        const baseAgroRange = mob.isBoss ? (playerOnPath ? 2 : 7) : (playerOnPath ? 1 : 5);
+        const agroRange = night ? baseAgroRange + 2 : baseAgroRange;
 
-          const distToPlayer = Math.hypot(mob.x - p.x, mob.y - p.y);
-          const playerTile = currentMap.tiles[Math.floor(p.y)]?.[Math.floor(p.x)] ?? 0;
-          const playerOnPath = playerTile === 8;
-          const baseAgroRange = mob.isBoss ? (playerOnPath ? 2 : 7) : (playerOnPath ? 1 : 5);
-          const agroRange = isNight ? baseAgroRange + 2 : baseAgroRange;
+        // If stealthed, mobs lose agro (§5.7)
+        if (p.isStealthed) {
+          return { ...mob, state: 'idle', lastAgroTime: undefined };
+        }
 
-          // If stealthed, mobs lose agro (§5.7)
-          if (p.isStealthed) {
-            return { ...mob, state: 'idle', lastAgroTime: undefined };
-          }
+        // Short-term aggro memory (3 seconds)
+        const hasAgroMemory = mob.lastAgroTime !== undefined && (now - mob.lastAgroTime < 3000);
+        const hasAgroRange = distToPlayer <= agroRange;
+        const hasAgro = hasAgroRange || hasAgroMemory;
 
-          // Short-term aggro memory (3 seconds)
-          const hasAgroMemory = mob.lastAgroTime !== undefined && (now - mob.lastAgroTime < 3000);
-          const hasAgroRange = distToPlayer <= agroRange;
-          const hasAgro = hasAgroRange || hasAgroMemory;
+        const updatedLastAgroTime = hasAgroRange ? now : mob.lastAgroTime;
 
-          const updatedLastAgroTime = hasAgroRange ? now : mob.lastAgroTime;
+        // Check if aligned and in range to attack player
+        const alignCheck = CombatEngine.isAligned(mob.x, mob.y, p.x, p.y, template.range);
 
-          // Check if aligned and in range to attack player
-          const alignCheck = CombatEngine.isAligned(mob.x, mob.y, p.x, p.y, template.range);
-
-          if (hasAgro && alignCheck.aligned && now - mob.lastAttackTime >= mob.attackIntervalMs) {
-            // Mob executes attack against player (nocturnal bonus at night)
-            const effectiveTemplate = isNight
-              ? {
-                  ...template,
-                  minHit: Math.round(template.minHit * 1.15),
-                  maxHit: Math.round(template.maxHit * 1.15),
-                  minHitToPlayer: template.minHitToPlayer ? Math.round(template.minHitToPlayer * 1.15) : undefined,
-                  maxHitToPlayer: template.maxHitToPlayer ? Math.round(template.maxHitToPlayer * 1.15) : undefined,
-                }
-              : template;
-            const result = CombatEngine.executeMobAttack(effectiveTemplate, p);
-
-            if (result.blocked) {
-              sound.playShieldBlock();
-              addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y);
-              addLog(result.message, 'block');
-            } else if (result.hit) {
-              sound.playHitImpact();
-              if (result.isCritical) {
-                rendererRef.current?.triggerCriticalHitShake(false, 0.78, 480, p.x, p.y);
-                triggerImpactEffect('receive');
-                addFloatingText(`¡CRÍTICO -${result.damage}! 💀`, '#f43f5e', p.x, p.y);
-                addLog(result.message, 'mob_hit');
-              } else {
-                rendererRef.current?.triggerScreenShake(0.35, 250);
-                addFloatingText(`-${result.damage}`, '#ef4444', p.x, p.y);
-                addLog(result.message, 'mob_hit');
+        if (hasAgro && alignCheck.aligned && now - mob.lastAttackTime >= mob.attackIntervalMs) {
+          // Mob executes attack against player (nocturnal bonus at night)
+          const effectiveTemplate = night
+            ? {
+                ...template,
+                minHit: Math.round(template.minHit * 1.15),
+                maxHit: Math.round(template.maxHit * 1.15),
+                minHitToPlayer: template.minHitToPlayer ? Math.round(template.minHitToPlayer * 1.15) : undefined,
+                maxHitToPlayer: template.maxHitToPlayer ? Math.round(template.maxHitToPlayer * 1.15) : undefined,
               }
+            : template;
+          const result = CombatEngine.executeMobAttack(effectiveTemplate, p);
 
-              const newPlayerHp = p.currentHp - result.damage;
-              if (newPlayerHp <= 0) {
-                // Player Defeat (§5.8)
-                sound.playPlayerDeath();
-                const goldPenalty = Math.round(p.gold * 0.1);
-                useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
-                setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
-              } else {
-                setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
-              }
+          if (result.blocked) {
+            sound.playShieldBlock();
+            addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y);
+            addLog(result.message, 'block');
+          } else if (result.hit) {
+            sound.playHitImpact();
+            if (result.isCritical) {
+              rendererRef.current?.triggerCriticalHitShake(false, 0.78, 480, p.x, p.y);
+              triggerImpactEffect('receive');
+              addFloatingText(`¡CRÍTICO -${result.damage}! 💀`, '#f43f5e', p.x, p.y);
+              addLog(result.message, 'mob_hit');
             } else {
-              addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y);
-              addLog(result.message, 'player_miss');
+              rendererRef.current?.triggerScreenShake(0.35, 250);
+              addFloatingText(`-${result.damage}`, '#ef4444', p.x, p.y);
+              addLog(result.message, 'mob_hit');
             }
 
+            const newPlayerHp = p.currentHp - result.damage;
+            if (newPlayerHp <= 0) {
+              // Player Defeat (§5.8)
+              sound.playPlayerDeath();
+              const goldPenalty = Math.round(p.gold * 0.1);
+              useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
+              setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
+            } else {
+              setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
+            }
+          } else {
+            addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y);
+            addLog(result.message, 'player_miss');
+          }
+
+          return {
+            ...mob,
+            lastAttackTime: now,
+            state: 'attacking',
+            lastAgroTime: updatedLastAgroTime,
+          };
+        }
+
+        // Chase player if in agro range or retains short-term aggro memory
+        if (hasAgro && distToPlayer > 1) {
+          let nextX = mob.x;
+          let nextY = mob.y;
+
+          const dx = p.x - mob.x;
+          const dy = p.y - mob.y;
+
+          // Simple pathing towards alignment with player
+          if (Math.abs(dx) > Math.abs(dy)) {
+            nextX += dx > 0 ? 1 : -1;
+          } else if (dy !== 0) {
+            nextY += dy > 0 ? 1 : -1;
+          }
+
+          // Check tile collision for mob
+          const tile = map.tiles[nextY]?.[nextX] ?? 1;
+          if (tile !== 1) {
             return {
               ...mob,
-              lastAttackTime: now,
-              state: 'attacking',
+              x: nextX,
+              y: nextY,
+              state: 'chasing',
               lastAgroTime: updatedLastAgroTime,
             };
           }
+        }
 
-          // Chase player if in agro range or retains short-term aggro memory
-          if (hasAgro && distToPlayer > 1) {
-            let nextX = mob.x;
-            let nextY = mob.y;
+        const nextState = hasAgro ? mob.state : 'idle';
+        return {
+          ...mob,
+          lastAgroTime: updatedLastAgroTime,
+          state: nextState,
+        };
+      })
+    );
+  };
 
-            const dx = p.x - mob.x;
-            const dy = p.y - mob.y;
+  // --- CENTRAL GAME LOOP SETUP ---
+  // One requestAnimationFrame drives all timed systems (day/night, combo,
+  // dash, attack cooldown, mob AI) via accumulator cadences — replacing the
+  // scattered React setInterval timers.
+  useEffect(() => {
+    const loop = new GameLoop();
 
-            // Simple pathing towards alignment with player
-            if (Math.abs(dx) > Math.abs(dy)) {
-              nextX += dx > 0 ? 1 : -1;
-            } else if (dy !== 0) {
-              nextY += dy > 0 ? 1 : -1;
-            }
+    // Day/Night cycle (~1s cadence)
+    loop.register('dayNight', 1000, advanceDayNight);
 
-            // Check tile collision for mob
-            const tile = currentMap.tiles[nextY]?.[nextX] ?? 1;
-            if (tile !== 1) {
-              return {
-                ...mob,
-                x: nextX,
-                y: nextY,
-                state: 'chasing',
-                lastAgroTime: updatedLastAgroTime,
-              };
-            }
-          }
+    // Combo timer window (50ms cadence)
+    loop.register('combo', 50, tickCombo);
 
-          const nextState = hasAgro ? mob.state : 'idle';
-          return {
-            ...mob,
-            lastAgroTime: updatedLastAgroTime,
-            state: nextState,
-          };
-        })
-      );
-    }, 700);
+    // Dash cooldown (50ms cadence)
+    loop.register('dash', 50, tickDash);
 
-    return () => clearInterval(aiInterval);
-  }, [currentMap, deathInfo]);
+    // Attack cooldown (40ms cadence)
+    loop.register('attackCooldown', 40, tickAttackCooldown);
+
+    // Mob AI (700ms cadence)
+    loop.register('mobAI', 700, () => {
+      mobAICallbackRef.current?.();
+    });
+
+    gameLoopRef.current = loop;
+    loop.start();
+
+    return () => {
+      loop.dispose();
+      gameLoopRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- QUICK POTION DRINK ---
   const handleUsePotion = (type: 'hp' | 'mp') => {
@@ -1701,6 +1442,31 @@ export default function App() {
     addLog(`¡Felicidades! Has sido promocionado exitosamente a la clase ${targetClass.toUpperCase()}.`, 'system');
   };
 
+  // Modal actions (inventory, quest, shop and crafting handlers)
+  const getItem = useCallback(
+    (id: string) => contentRegistry.getItem(id) || ITEMS[id],
+    []
+  );
+  const {
+    handleConsolidateInventory,
+    handleEquipItem,
+    handleUnequipItem,
+    handleUseItem,
+    handleDropItem,
+    handleClaimQuestReward,
+    handleBuyItem,
+    handleSellItem,
+    handleCraft,
+  } = useModalActions({
+    player,
+    setPlayer,
+    addLog,
+    addToast,
+    addFloatingText,
+    handleUsePotion,
+    getItem,
+  });
+
   // Helper counts for potions
   const hpPotionCount =
     player?.inventory.reduce((acc, i) => (i?.id === 'pocion_roja' ? acc + (i.count || 1) : acc), 0) || 0;
@@ -1835,8 +1601,7 @@ export default function App() {
             onStartGame={(name, classType) => {
               const newPlayer = createInitialPlayer(name, classType);
               const targetSlot = creatingSlotIndex ?? 0;
-              setActiveSlotIndexState(targetSlot);
-              setActiveSlotIndex(targetSlot);
+              saveActiveSlot(targetSlot);
               const updated = saveCharacterToSlot(targetSlot, newPlayer);
               setCharacterSlots([...updated]);
               setPlayer(newPlayer);
@@ -1863,108 +1628,11 @@ export default function App() {
       {player && (
         <InventoryModal
           player={player}
-          onConsolidateInventory={() => {
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const consolidated = consolidateInventory(prev.inventory);
-              addLog('Inventario organizado y apilado con éxito.', 'system');
-              addToast('Inventario Apilado', 'Se agruparon todos los elementos duplicados.', '📦', 'system');
-              return { ...prev, inventory: consolidated };
-            });
-          }}
-          onEquipItem={(item, index) => {
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const newInv = [...prev.inventory];
-              const newEq = { ...prev.equipment };
-
-              // Determine slot
-              let slotKey: keyof PlayerCharacter['equipment'] = 'weapon';
-              if (item.type === 'weapon') slotKey = 'weapon';
-              else if (item.type === 'shield') slotKey = 'shield';
-              else if (item.type === 'helmet') slotKey = 'helmet';
-              else if (item.type === 'armor') slotKey = 'armor';
-              else if (item.type === 'boots') slotKey = 'boots';
-              else if (item.type === 'ring') slotKey = newEq.ring1 ? 'ring2' : 'ring1';
-              else if (item.type === 'amulet') slotKey = 'amulet';
-              else if (item.type === 'arrow') slotKey = 'arrows';
-
-              const previousEquipped = newEq[slotKey];
-              newEq[slotKey] = item;
-              newInv[index] = previousEquipped;
-
-              sound.playLoot();
-              addLog(`Te equipaste: ${item.name}`, 'system');
-
-              return { ...prev, inventory: newInv, equipment: newEq };
-            });
-          }}
-          onUnequipItem={(slot) => {
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const currentItem = prev.equipment[slot];
-              if (!currentItem) return prev;
-
-              const emptyIdx = prev.inventory.findIndex((i) => i === null);
-              if (emptyIdx === -1) {
-                addLog('¡Tu mochila está llena!', 'system');
-                return prev;
-              }
-
-              const newInv = [...prev.inventory];
-              newInv[emptyIdx] = currentItem;
-              const newEq = { ...prev.equipment, [slot]: null };
-
-              sound.playLoot();
-              addLog(`Te desequipaste: ${currentItem.name}`, 'system');
-
-              return { ...prev, inventory: newInv, equipment: newEq };
-            });
-          }}
-          onUseItem={(item, index) => {
-            if (item.type === 'potion') {
-              if (item.hpRestore) handleUsePotion('hp');
-              if (item.mpRestore) handleUsePotion('mp');
-            } else if (item.id === 'libro_hechizo_apocalipsis') {
-              setPlayer((prev) => {
-                if (!prev) return null;
-                if (prev.knownSpells.includes('apocalipsis')) {
-                  addToast('Ya Aprendido', 'Ya conoces el conjuro Apocalipsis.', '📜', 'system');
-                  return prev;
-                }
-                const newInv = [...prev.inventory];
-                newInv[index] = null;
-                const newSpells = [...prev.knownSpells, 'apocalipsis'];
-                sound.playLevelUp();
-                confetti({ particleCount: 50, spread: 70 });
-                addToast('¡Hechizo Aprendido!', 'Has dominado el hechizo definitivo: ¡Apocalipsis!', '🔥', 'level');
-                addLog('Has estudiado el Grimorio de Apocalipsis. El conjuro definitivo ahora está disponible en tu libro de hechizos.', 'system');
-                return { ...prev, inventory: newInv, knownSpells: newSpells };
-              });
-            } else if (item.id === 'libro_herreria_intermedia') {
-              setPlayer((prev) => {
-                if (!prev) return null;
-                const newInv = [...prev.inventory];
-                newInv[index] = null;
-                const newSkills = { ...prev.skills };
-                newSkills.herreria = { ...newSkills.herreria, level: Math.min(100, newSkills.herreria.level + 10) };
-                sound.playLevelUp();
-                addToast('¡Conocimiento de Forja!', 'Tu herrería aumentó en +10 niveles.', '🔨', 'level');
-                addLog('Leíste el Tomo de Herrería Intermedia. Tu habilidad de forja aumentó notablemente.', 'system');
-                return { ...prev, inventory: newInv, skills: newSkills };
-              });
-            }
-          }}
-          onDropItem={(index) => {
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const newInv = [...prev.inventory];
-              const dropped = newInv[index];
-              newInv[index] = null;
-              if (dropped) addLog(`Tiraste: ${dropped.name}`, 'system');
-              return { ...prev, inventory: newInv };
-            });
-          }}
+          onConsolidateInventory={handleConsolidateInventory}
+          onEquipItem={handleEquipItem}
+          onUnequipItem={handleUnequipItem}
+          onUseItem={handleUseItem}
+          onDropItem={handleDropItem}
         />
       )}
 
@@ -1981,70 +1649,7 @@ export default function App() {
       {player && (
         <QuestModal
           quests={player.activeQuests}
-          onClaimReward={(questId) => {
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const quest = prev.activeQuests.find((q) => q.id === questId);
-              if (!quest) return prev;
-
-              sound.playLevelUp();
-              confetti({ particleCount: 40, spread: 60 });
-              addLog(`¡Completaste [${quest.title}]! Recompensa: 🪙 ${quest.goldReward} Oro, ⭐ ${quest.expReward} EXP.`, 'loot');
-              addToast('¡Misión Completada!', quest.title, '📜', 'quest');
-
-              const newQuests = prev.activeQuests.map((q) => (q.id === questId ? { ...q, claimed: true } : q));
-              let newInv = [...prev.inventory];
-
-              // Grant item reward if applicable
-              if (quest.itemReward) {
-                const rewardItem = contentRegistry.getItem(quest.itemReward.itemId) || ITEMS[quest.itemReward.itemId];
-                if (rewardItem) {
-                  const { inventory: updatedInv, success } = addItemToInventory(newInv, rewardItem, quest.itemReward.count);
-                  if (success) {
-                    newInv = updatedInv;
-                    addLog(`Recibiste objeto de recompensa: ${rewardItem.name} (x${quest.itemReward.count})`, 'loot');
-                  } else {
-                    addLog(`¡Inventario lleno! No se pudo guardar la recompensa de ítem.`, 'system');
-                  }
-                }
-              }
-
-              // Check if 2nd Job promotion quest claimed (§7.2)
-              let newJobStage = prev.jobStage;
-              let newJobTitle = prev.jobTitle;
-              let newMaxHp = prev.maxHp;
-              let newMaxMp = prev.maxMp;
-
-              if (questId === 'quest_segundo_job_maestria' && prev.jobStage === 'primer_job') {
-                newJobStage = 'segundo_job';
-                const classTitles: Record<string, string> = {
-                  guerrero: 'PALADÍN / CABALLERO DE ÉLITE',
-                  cazador: 'FRANCOTIRADOR / MAESTRO DE CAZA',
-                  mago: 'ARCHIMAGO / SEÑOR ELEMENTAL',
-                  picaro: 'ASESINO SOMBRÍO / MAESTRO DEL SIGILO',
-                };
-                newJobTitle = classTitles[prev.classType] || 'MAESTRO DE 2º JOB';
-                newMaxHp += 40;
-                newMaxMp += 30;
-                addToast('¡2º JOB DESBLOQUEADO!', `Has ascendido a ${newJobTitle}`, '👑', 'level');
-                addLog(`¡Has alcanzado la cúspide de tu clase! Título de Segundo Job: ${newJobTitle}.`, 'system');
-              }
-
-              return {
-                ...prev,
-                gold: prev.gold + quest.goldReward,
-                exp: prev.exp + quest.expReward,
-                inventory: newInv,
-                jobStage: newJobStage,
-                jobTitle: newJobTitle,
-                maxHp: newMaxHp,
-                currentHp: Math.min(newMaxHp, prev.currentHp + 40),
-                maxMp: newMaxMp,
-                currentMp: Math.min(newMaxMp, prev.currentMp + 30),
-                activeQuests: newQuests,
-              };
-            });
-          }}
+          onClaimReward={handleClaimQuestReward}
         />
       )}
 
@@ -2054,57 +1659,8 @@ export default function App() {
           shopType={activeShop}
           player={player}
           onClose={() => useUIStore.getState().setActiveShop(null)}
-          onBuyItem={(item) => {
-            if (player.gold < item.price) return;
-
-            let isSuccess = false;
-            let wasStacked = false;
-
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const { inventory: updatedInv, success, stacked } = addItemToInventory(prev.inventory, item, 1);
-              if (!success) {
-                addLog('¡Mochila llena!', 'system');
-                return prev;
-              }
-              isSuccess = true;
-              wasStacked = stacked;
-              return {
-                ...prev,
-                gold: prev.gold - item.price,
-                inventory: updatedInv,
-              };
-            });
-
-            if (isSuccess) {
-              sound.playLoot();
-              addLog(`Compraste ${item.name} por 🪙 ${item.price} oro.${wasStacked ? ' (Apilado en mochila)' : ''}`, 'loot');
-            }
-          }}
-          onSellItem={(index) => {
-            const item = player.inventory[index];
-            if (!item) return;
-            const price = item.sellPrice || Math.floor(item.price * 0.4);
-
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const newInv = [...prev.inventory];
-              const currentCount = item.count || 1;
-              if (currentCount > 1) {
-                newInv[index] = { ...item, count: currentCount - 1 };
-              } else {
-                newInv[index] = null;
-              }
-              return {
-                ...prev,
-                gold: prev.gold + price,
-                inventory: newInv,
-              };
-            });
-
-            sound.playLoot();
-            addLog(`Vendiste 1x ${item.name} por 🪙 ${price} oro.`, 'loot');
-          }}
+          onBuyItem={handleBuyItem}
+          onSellItem={handleSellItem}
         />
       )}
 
@@ -2114,75 +1670,7 @@ export default function App() {
           station={activeCrafting}
           player={player}
           onClose={() => useUIStore.getState().setActiveCrafting(null)}
-          onCraft={(recipe: CraftingRecipe) => {
-            const outputItem = contentRegistry.getItem(recipe.outputItemId) || ITEMS[recipe.outputItemId];
-            if (!outputItem) return;
-
-            // GDD §8.3 Crafting formula: Probabilidad = 50% + (Skill - Dificultad) * 2% [10%, 95%]
-            const skillLevel = recipe.skillType ? (player.skills[recipe.skillType]?.level || 10) : 10;
-            const diff = recipe.difficulty || 10;
-            const successChance = Math.min(95, Math.max(10, Math.round(50 + (skillLevel - diff) * 2)));
-            const isSuccess = Math.random() * 100 <= successChance;
-
-            setPlayer((prev) => {
-              if (!prev) return null;
-              const newInv = [...prev.inventory];
-              const newSkills = { ...prev.skills };
-
-              // Consume ingredients (or salvage 50% on failure)
-              recipe.ingredients.forEach((ing) => {
-                let needed = isSuccess ? ing.count : Math.max(1, Math.ceil(ing.count * 0.5));
-                for (let i = 0; i < newInv.length && needed > 0; i++) {
-                  if (newInv[i]?.id === ing.itemId) {
-                    const available = newInv[i]!.count || 1;
-                    if (available <= needed) {
-                      needed -= available;
-                      newInv[i] = null;
-                    } else {
-                      newInv[i] = { ...newInv[i]!, count: available - needed };
-                      needed = 0;
-                    }
-                  }
-                }
-              });
-
-              // On success: Add crafted item with stacking
-              if (isSuccess) {
-                const { inventory: craftedInv, success } = addItemToInventory(newInv, outputItem, recipe.outputCount);
-                if (success) {
-                  for (let k = 0; k < 20; k++) {
-                    newInv[k] = craftedInv[k];
-                  }
-                }
-              }
-
-              // Skill increase chance on craft attempt (§8.3)
-              if (recipe.skillType && newSkills[recipe.skillType]) {
-                const currentSk = newSkills[recipe.skillType]!;
-                if (currentSk.level < currentSk.maxLevel && Math.random() < 0.35) {
-                  newSkills[recipe.skillType] = { ...currentSk, level: currentSk.level + 1 };
-                  addToast('¡Habilidad Aumentada!', `${currentSk.name} subió a Nivel ${currentSk.level + 1}`, '📈', 'level');
-                }
-              }
-
-              return {
-                ...prev,
-                gold: prev.gold - recipe.goldCost,
-                inventory: newInv,
-                skills: newSkills,
-              };
-            });
-
-            if (isSuccess) {
-              sound.playGather();
-              confetti({ particleCount: 30, spread: 50 });
-              addLog(`¡Fabricaste ${outputItem.name} con éxito! (${successChance}% de probabilidad)`, 'loot');
-            } else {
-              sound.playShieldBlock();
-              addToast('Fallo de Elaboración', `La forja falló (${successChance}% prob). Se recuperaron parte de los materiales.`, '💥', 'system');
-              addLog(`Fallo al elaborar ${outputItem.name}. Algunos materiales se dañaron en el proceso.`, 'system');
-            }
-          }}
+          onCraft={handleCraft}
         />
       )}
 
@@ -2219,7 +1707,7 @@ export default function App() {
             saveGameState(player);
           }
           setPlayer(null);
-          setCharacterSlots(loadCharacterSlots());
+          refreshSlots();
         }}
       />
 

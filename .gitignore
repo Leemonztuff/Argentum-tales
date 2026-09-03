@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Third-party compressed VFX/sprite packs (not used at runtime; spritesheets load from remote URLs)
+public/VFX/
