@@ -25,21 +25,20 @@ import {
   addItemToInventory,
   consolidateInventory,
   shouldAutoPickupItem,
-  DEFAULT_AUTO_PICKUP_FILTERS,
 } from './utils/inventoryUtils';
 import {
   createInitialPlayer,
   loadGameState,
   saveGameState,
   clearGameState,
-  loadCharacterSlots,
   saveCharacterToSlot,
-  deleteCharacterSlot,
-  getActiveSlotIndex,
-  setActiveSlotIndex,
 } from './services/saveGame';
 import { Game3DRenderer } from './engine/Game3DRenderer';
 import { GameLoop } from './engine/GameLoop';
+import { useDayNightCycle } from './hooks/useDayNightCycle';
+import { useGameSettings } from './hooks/useGameSettings';
+import { useCharacterSlots } from './hooks/useCharacterSlots';
+import { usePlayerMovement } from './hooks/usePlayerMovement';
 
 // Components
 import { GameCanvas } from './components/GameCanvas';
@@ -58,7 +57,7 @@ import { Minimap } from './components/Minimap';
 import { OrientationPrompt } from './components/OrientationPrompt';
 import { HelpModal } from './components/HelpModal';
 import { DataStudioModal } from './components/DataStudioModal';
-import { SettingsModal, GameSettingsState } from './components/SettingsModal';
+import { SettingsModal } from './components/SettingsModal';
 import { TitleScreen } from './components/TitleScreen';
 import { ToastNotification, ToastMessage } from './components/ToastNotification';
 import { useUIStore, ModalId } from './ui';
@@ -66,48 +65,9 @@ import { useUIStore, ModalId } from './ui';
 export default function App() {
   // Game Setup / Character State
   const [player, setPlayer] = useState<PlayerCharacter | null>(null);
-  const [isCharacterCreating, setIsCharacterCreating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
-  const [characterSlots, setCharacterSlots] = useState(() => loadCharacterSlots());
-  const [activeSlotIndex, setActiveSlotIndexState] = useState(() => getActiveSlotIndex());
-  const [creatingSlotIndex, setCreatingSlotIndex] = useState<number | null>(null);
-
-  const handleSelectSlot = (index: number) => {
-    const char = characterSlots[index];
-    if (char) {
-      setActiveSlotIndexState(index);
-      setActiveSlotIndex(index);
-      setPlayer(char);
-      const map = MAPS[char.currentMapId] || MAPS.pueblo_inicial;
-      setCurrentMap(map);
-      spawnMobsForMap(map, char.revengeTargetTemplateId);
-    }
-  };
-
-  const handleDeleteSlot = (index: number) => {
-    const updated = deleteCharacterSlot(index);
-    setCharacterSlots([...updated]);
-  };
-
-  const handleStartCreateCharacter = (index: number) => {
-    setCreatingSlotIndex(index);
-    setIsCharacterCreating(true);
-  };
-
-  // Day-Night Cycle State
-  const [timeProgress, setTimeProgress] = useState<number>(0.35); // 0.0 to 1.0 (0.35 = ~08:24 AM)
-  const isNight = timeProgress < 0.25 || timeProgress > 0.79;
-
-  useEffect(() => {
-    return () => {};
-  }, []);
-
-  useEffect(() => {
-    if (rendererRef.current) {
-      rendererRef.current.updateLightingByTime(timeProgress, isNight);
-    }
-  }, [timeProgress, isNight]);
+  // Day/Night cycle, lighting sync and isNight are owned by useDayNightCycle.
 
   // Map & Entity State
   const [currentMap, setCurrentMap] = useState<GameMap>(MAPS.pueblo_inicial);
@@ -129,39 +89,7 @@ export default function App() {
   const toggleDataStudio = () => toggleModal('dataStudio');
   const toggleSettings = () => toggleModal('settings');
   const closeAllModals = () => useUIStore.getState().closeAllModals();
-  const [gameSettings, setGameSettings] = useState<GameSettingsState>(() => {
-    const saved = localStorage.getItem('argentum_game_settings');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          autoPickup: parsed.autoPickup ?? true,
-          autoPickupFilters: parsed.autoPickupFilters || DEFAULT_AUTO_PICKUP_FILTERS,
-          critShake: parsed.critShake ?? true,
-          showLootToasts: parsed.showLootToasts ?? true,
-          autoAlignGrid: parsed.autoAlignGrid ?? false,
-          soundMuted: parsed.soundMuted ?? false,
-        };
-      } catch (e) {
-        // fallback
-      }
-    }
-    return {
-      autoPickup: true,
-      autoPickupFilters: DEFAULT_AUTO_PICKUP_FILTERS,
-      critShake: true,
-      showLootToasts: true,
-      autoAlignGrid: false,
-      soundMuted: false,
-    };
-  });
-
-  const updateGameSettings = useCallback((newSettings: Partial<GameSettingsState>) => {
-    setGameSettings((prev) => {
-      const updated = { ...prev, ...newSettings };      localStorage.setItem('argentum_game_settings', JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const { gameSettings, updateGameSettings } = useGameSettings();
   const activeShop = useUIStore((s) => s.activeShop);
   const activeCrafting = useUIStore((s) => s.activeCrafting);
   const activeDialogueNpc = useUIStore((s) => s.activeDialogueNpc);
@@ -352,12 +280,13 @@ export default function App() {
   const comboCountRef = useRef<number>(0);
   const lastDashTimestampRef = useRef<number>(0);
   const currentMapRef = useRef<GameMap>(currentMap);
-  const isNightRef = useRef<boolean>(isNight);
   comboLastHitTimeRef.current = comboLastHitTime;
   comboCountRef.current = comboCount;
   lastDashTimestampRef.current = lastDashTimestamp;
   currentMapRef.current = currentMap;
-  isNightRef.current = isNight;
+
+  // Day/Night cycle (owns timeProgress, isNight, isNightRef, lighting sync)
+  const { timeProgress, isNight, isNightRef, advanceDayNight } = useDayNightCycle({ rendererRef });
 
   // --- INITIAL LOAD ---
   useEffect(() => {
@@ -470,6 +399,23 @@ export default function App() {
     setActiveMobs(spawned);
   };
 
+  // Character select/creation flow (title screen slots)
+  const {
+    characterSlots,
+    activeSlotIndex,
+    creatingSlotIndex,
+    isCharacterCreating,
+    handleSelectSlot,
+    handleDeleteSlot,
+    handleStartCreateCharacter,
+    setIsCharacterCreating,
+    setCharacterSlots,
+    setActiveSlotIndexState,
+    setCreatingSlotIndex,
+    saveActiveSlot,
+    refreshSlots,
+  } = useCharacterSlots({ setPlayer, setCurrentMap, spawnMobsForMap });
+
   // --- MAP CHANGE & PORTAL TRANSITION ---
   const changeMap = (targetMapId: string, targetX: number, targetY: number) => {
     const targetMap = MAPS[targetMapId];
@@ -495,86 +441,17 @@ export default function App() {
   changeMapRef.current = changeMap;
 
   // --- PLAYER MOVEMENT ---
-  const handlePlayerMove = useCallback(
-    (dx: number, dy: number, isAuto?: boolean) => {
-      const p = playerRef.current;
-      const map = currentMapRef.current;
-      if (!p || useUIStore.getState().deathInfo) return;
-
-      if (!isAuto) {
-        cancelAutoAlign();
-      }
-
-      const newX = p.x + dx;
-      const newY = p.y + dy;
-
-      // Check map boundary
-      if (newX < 0 || newX >= map.width || newY < 0 || newY >= map.height) {
-        return;
-      }
-
-      // Check tile collision
-      const tile = map.tiles[newY]?.[newX] ?? 1;
-      const isBlocking = (t: number) => [1, 2, 5, 6, 7].includes(t);
-      if (isBlocking(tile)) {
-        return;
-      }
-
-      // Check NPC collision
-      const npcCollision = map.npcs.find((n) => n.x === newX && n.y === newY);
-      if (npcCollision) return;
-
-      // Check Mob collision
-      const mobCollision = mobsRef.current.find((m) => m.x === newX && m.y === newY);
-      if (mobCollision) return;
-
-      // Determine facing direction
-      let facing: PlayerCharacter['facing'] = p.facing;
-      if (dx > 0) facing = 'right';
-      else if (dx < 0) facing = 'left';
-      else if (dy > 0) facing = 'down';
-      else if (dy < 0) facing = 'up';
-
-      setPlayer((prev) => {
-        if (!prev) return null;
-
-        const prevTile = map.tiles[Math.floor(prev.y)]?.[Math.floor(prev.x)] ?? 0;
-        const nextTile = map.tiles[Math.floor(newY)]?.[Math.floor(newX)] ?? 0;
-
-        if (prevTile !== 8 && nextTile === 8) {
-          addLog('🛡️ Estás en un camino seguro. La agresión de los monstruos se ha reducido.', 'system');
-        } else if (prevTile === 8 && nextTile !== 8) {
-          addLog('⚠️ Has salido del camino seguro. Los monstruos recuperan su agresividad natural.', 'player_miss');
-        }
-
-        return {
-          ...prev,
-          x: newX,
-          y: newY,
-          facing,
-        };
-      });
-
-      // Auto-target nearest mob in straight line
-      const alignedMob = mobsRef.current.find((m) => {
-        const weaponRange = p.equipment.weapon?.range || 1;
-        const res = CombatEngine.isAligned(newX, newY, m.x, m.y, weaponRange);
-        return res.aligned;
-      });
-      if (alignedMob) {
-        setSelectedTarget({ type: 'mob', mob: alignedMob });
-      }
-
-      // Check Portal (only if we didn't just teleport)
-      if (Date.now() - lastTeleportTime.current > 1000) {
-        const portal = map.portals.find((pp) => pp.x === newX && pp.y === newY);
-        if (portal) {
-          changeMapRef.current?.(portal.targetMapId, portal.targetX, portal.targetY);
-        }
-      }
-    },
-    [cancelAutoAlign]
-  );
+  const { handlePlayerMove, handlePlayerPositionChange } = usePlayerMovement({
+    playerRef,
+    currentMapRef,
+    mobsRef,
+    lastTeleportTime,
+    changeMapRef,
+    setPlayer,
+    setSelectedTarget,
+    addLog,
+    cancelAutoAlign,
+  });
 
   // --- RECOGIDO AUTOMÁTICO (Auto-Pickup) DE RECURSOS DEL MAPA ---
   useEffect(() => {
@@ -622,40 +499,6 @@ export default function App() {
       }
     });
   }, [player?.x, player?.y, gameSettings.autoPickup, gameSettings.autoPickupFilters, gameSettings.showLootToasts, currentMap, deathInfo, addToast]);
-
-  const handlePlayerPositionChange = useCallback((x: number, y: number, facing: 'up' | 'down' | 'left' | 'right') => {
-    const p = playerRef.current;
-    if (!p || useUIStore.getState().deathInfo) return;
-
-    setPlayer((prev) => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        x,
-        y,
-        facing,
-      };
-    });
-
-    // Auto-target nearest mob in straight line
-    const map = currentMapRef.current;
-    const weaponRange = p.equipment.weapon?.range || 1;
-    const alignedMob = mobsRef.current.find((m) => {
-      const res = CombatEngine.isAligned(x, y, m.x, m.y, weaponRange);
-      return res.aligned;
-    });
-    if (alignedMob) {
-      setSelectedTarget({ type: 'mob', mob: alignedMob });
-    }
-
-    // Check Portal (only if we didn't just teleport)
-    if (Date.now() - lastTeleportTime.current > 1000) {
-      const portal = map.portals.find((pp) => pp.x === x && pp.y === y);
-      if (portal) {
-        changeMapRef.current?.(portal.targetMapId, portal.targetX, portal.targetY);
-      }
-    }
-  }, []);
 
   const handleDash = useCallback(() => {
     if (!player || deathInfo) return;
@@ -1534,9 +1377,7 @@ export default function App() {
     const loop = new GameLoop();
 
     // Day/Night cycle (~1s cadence)
-    loop.register('dayNight', 1000, () => {
-      setTimeProgress((prev) => (prev + 0.002) % 1.0);
-    });
+    loop.register('dayNight', 1000, advanceDayNight);
 
     // Combo timer window (50ms cadence)
     loop.register('combo', 50, () => {
@@ -1882,8 +1723,7 @@ export default function App() {
             onStartGame={(name, classType) => {
               const newPlayer = createInitialPlayer(name, classType);
               const targetSlot = creatingSlotIndex ?? 0;
-              setActiveSlotIndexState(targetSlot);
-              setActiveSlotIndex(targetSlot);
+              saveActiveSlot(targetSlot);
               const updated = saveCharacterToSlot(targetSlot, newPlayer);
               setCharacterSlots([...updated]);
               setPlayer(newPlayer);
@@ -2266,7 +2106,7 @@ export default function App() {
             saveGameState(player);
           }
           setPlayer(null);
-          setCharacterSlots(loadCharacterSlots());
+          refreshSlots();
         }}
       />
 
