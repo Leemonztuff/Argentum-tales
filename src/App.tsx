@@ -40,6 +40,7 @@ import { useGameSettings } from './hooks/useGameSettings';
 import { useCharacterSlots } from './hooks/useCharacterSlots';
 import { usePlayerMovement } from './hooks/usePlayerMovement';
 import { useMapEntities } from './hooks/useMapEntities';
+import { useCombatCounters, DASH_COOLDOWN_MS } from './hooks/useCombatCounters';
 
 // Components
 import { GameCanvas } from './components/GameCanvas';
@@ -96,51 +97,7 @@ export default function App() {
   const activeDialogueNpc = useUIStore((s) => s.activeDialogueNpc);
   const deathInfo = useUIStore((s) => s.deathInfo);
 
-  // Combat Timing & Critical Impact State
-  const [attackCooldownPercent, setAttackCooldownPercent] = useState(0);
-  const [lastSpellTimestamps, setLastSpellTimestamps] = useState<Record<string, number>>({});
-  const [lastDashTimestamp, setLastDashTimestamp] = useState<number>(0);
-  const DASH_COOLDOWN_MS = 2500;
-  const [dashCooldownPercent, setDashCooldownPercent] = useState<number>(0);
-
-  const [critEffect, setCritEffect] = useState<{ type: 'deal' | 'receive'; key: number } | null>(null);
-
-  // Combo Counter state
-  const [comboCount, setComboCount] = useState<number>(0);
-  const [comboTargetInstanceId, setComboTargetInstanceId] = useState<string | null>(null);
-  const [comboTargetName, setComboTargetName] = useState<string | null>(null);
-  const [comboLastHitTime, setComboLastHitTime] = useState<number>(0);
-  const [comboTimeLeftPercent, setComboTimeLeftPercent] = useState<number>(100);
-
-  // Ticks down the combo timer window (handled by central GameLoop) — removed interval here
-
-  const getUpdatedComboCount = (targetInstanceId: string, targetName: string) => {
-    const now = Date.now();
-    const isSameMob = comboTargetInstanceId === targetInstanceId;
-    const isWithinTime = now - comboLastHitTime <= 3000;
-
-    let nextCombo = 1;
-    if (isSameMob && isWithinTime) {
-      nextCombo = comboCount + 1;
-    }
-
-    setComboCount(nextCombo);
-    setComboTargetInstanceId(targetInstanceId);
-    setComboTargetName(targetName);
-    setComboLastHitTime(now);
-
-    return nextCombo;
-  };
-
-  const triggerImpactEffect = (type: 'deal' | 'receive') => {
-    const key = Date.now();
-    setCritEffect({ type, key });
-    setTimeout(() => {
-      setCritEffect((prev) => (prev?.key === key ? null : prev));
-    }, 550);
-  };
-
-  // Dash cooldown ticker — handled by central GameLoop (interval removed here)
+  // Combat timing, crit impact and combo counters are owned by useCombatCounters.
 
   // Auto-Alignment State & Refs
   const [isAutoAligning, setIsAutoAligning] = useState(false);
@@ -276,15 +233,34 @@ export default function App() {
   const mobAICallbackRef = useRef<(() => void) | null>(null);
   const changeMapRef = useRef<((targetMapId: string, targetX: number, targetY: number) => void) | null>(null);
 
-  // Fresh-value refs consumed inside the single-instance game-loop callbacks
-  const comboLastHitTimeRef = useRef<number>(0);
-  const comboCountRef = useRef<number>(0);
-  const lastDashTimestampRef = useRef<number>(0);
+  // Fresh-value ref: currentMap for single-instance game-loop callbacks
   const currentMapRef = useRef<GameMap>(currentMap);
-  comboLastHitTimeRef.current = comboLastHitTime;
-  comboCountRef.current = comboCount;
-  lastDashTimestampRef.current = lastDashTimestamp;
   currentMapRef.current = currentMap;
+
+  // Combat counters (cooldowns, crit, combo) + their GameLoop cadences
+  const {
+    attackCooldownPercent,
+    dashCooldownPercent,
+    critEffect,
+    comboCount,
+    comboTargetName,
+    comboTimeLeftPercent,
+    comboCountRef,
+    setComboCount,
+    setComboTargetInstanceId,
+    setComboTargetName,
+    lastDashTimestamp,
+    setLastDashTimestamp,
+    lastDashTimestampRef,
+    getUpdatedComboCount,
+    triggerImpactEffect,
+    tickCombo,
+    tickDash,
+    tickAttackCooldown,
+  } = useCombatCounters({ playerRef });
+
+  // Spell cast cooldown tracking (kept in App; consumed by handleCastSpell)
+  const [lastSpellTimestamps, setLastSpellTimestamps] = useState<Record<string, number>>({});
 
   // Day/Night cycle (owns timeProgress, isNight, isNightRef, lighting sync)
   const { timeProgress, isNight, isNightRef, advanceDayNight } = useDayNightCycle({ rendererRef });
@@ -1286,42 +1262,13 @@ export default function App() {
     loop.register('dayNight', 1000, advanceDayNight);
 
     // Combo timer window (50ms cadence)
-    loop.register('combo', 50, () => {
-      if (comboCountRef.current <= 0) return;
-      const elapsed = Date.now() - comboLastHitTimeRef.current;
-      const remainingMs = 3000 - elapsed;
-      if (remainingMs <= 0) {
-        setComboCount(0);
-        setComboTargetInstanceId(null);
-        setComboTargetName(null);
-        setComboTimeLeftPercent(0);
-      } else {
-        setComboTimeLeftPercent((remainingMs / 3000) * 100);
-      }
-    });
+    loop.register('combo', 50, tickCombo);
 
     // Dash cooldown (50ms cadence)
-    loop.register('dash', 50, () => {
-      const elapsed = Date.now() - lastDashTimestampRef.current;
-      if (elapsed < DASH_COOLDOWN_MS) {
-        setDashCooldownPercent(Math.max(0, 1 - elapsed / DASH_COOLDOWN_MS));
-      } else {
-        setDashCooldownPercent(0);
-      }
-    });
+    loop.register('dash', 50, tickDash);
 
     // Attack cooldown (40ms cadence)
-    loop.register('attackCooldown', 40, () => {
-      const p = playerRef.current;
-      if (!p) return;
-      const attackIntervalMs = CombatEngine.calculateAttackInterval(p);
-      const elapsed = Date.now() - p.lastAttackTimestamp;
-      if (elapsed >= attackIntervalMs) {
-        setAttackCooldownPercent(0);
-      } else {
-        setAttackCooldownPercent(1 - elapsed / attackIntervalMs);
-      }
-    });
+    loop.register('attackCooldown', 40, tickAttackCooldown);
 
     // Mob AI (700ms cadence)
     loop.register('mobAI', 700, () => {
