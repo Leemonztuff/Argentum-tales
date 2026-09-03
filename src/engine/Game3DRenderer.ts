@@ -35,6 +35,79 @@ function applyMagentaKeyToCanvas(canvas: HTMLCanvasElement): void {
   ctx.putImageData(imgData, 0, 0);
 }
 
+/**
+ * Returns the bounding box of non-empty (non-magenta / non-transparent) pixels inside the
+ * source region (ox, oy, ow, oh) of an image. Sprite-sheet cells are rarely perfectly centered,
+ * so re-centering each frame's actual content removes lateral "wobble" while walking.
+ */
+function getNonEmptyBounds(
+  img: HTMLImageElement | HTMLCanvasElement,
+  ox: number,
+  oy: number,
+  ow: number,
+  oh: number
+): { x: number; y: number; w: number; h: number } | null {
+  const w = img.width;
+  const h = img.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = ow;
+  canvas.height = oh;
+  const lctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!lctx) return null;
+  lctx.drawImage(img, ox, oy, ow, oh, 0, 0, ow, oh);
+  const data = lctx.getImageData(0, 0, ow, oh).data;
+
+  let minX = ow, maxX = -1, minY = oh, maxY = -1;
+  for (let y = 0; y < oh; y++) {
+    for (let x = 0; x < ow; x++) {
+      const i = (y * ow + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+      const isMagenta = r > 200 && g < 80 && b > 200 && Math.abs(r - b) < MAGENTA_TOLERANCE;
+      if (a <= 10 || isMagenta) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+/**
+ * Draws a single sprite layer (body or overlay) into its own canvas, applying the
+ * magenta chroma-key FIRST so the layer only carries its real pixels. This lets
+ * overlays (e.g. a head sheet whose lower region is pure magenta) be composited on
+ * top of the body without their magenta background erasing what is underneath.
+ */
+function drawLayerWithMagentaKey(
+  img: HTMLImageElement | HTMLCanvasElement,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  alpha: number
+): HTMLCanvasElement {
+  const layer = document.createElement('canvas');
+  layer.width = Math.max(1, Math.ceil(dw));
+  layer.height = Math.max(1, Math.ceil(dh));
+  const lctx = layer.getContext('2d')!;
+  lctx.imageSmoothingEnabled = false;
+  lctx.globalAlpha = alpha;
+  lctx.drawImage(img, sx, sy, sw, sh, 0, 0, layer.width, layer.height);
+  lctx.globalAlpha = 1;
+  applyMagentaKeyToCanvas(layer);
+  return layer;
+}
+
 export class Game3DRenderer {
   private container: HTMLElement;
   private scene: THREE.Scene;
@@ -1026,15 +1099,27 @@ export class Game3DRenderer {
       (ctx as any).mozImageSmoothingEnabled = false;
       (ctx as any).msImageSmoothingEnabled = false;
 
+      // Detect the actual content bounds of this frame. Spritesheet cells are rarely
+      // centered, so re-centering each frame's content removes lateral "wobble" and stops
+      // neighbouring frames from bleeding into view while walking.
+      const frameCrop = getNonEmptyBounds(img, sx, sy, frameW, frameH);
+      const srcX = frameCrop ? sx + frameCrop.x : sx;
+      const srcY = frameCrop ? sy + frameCrop.y : sy;
+      const srcW = frameCrop ? frameCrop.w : frameW;
+      const srcH = frameCrop ? frameCrop.h : frameH;
+
       // Target max dimension within 256x256 texture (max height = 180 to fit label at y=22 and feet at y=236)
       const targetMaxDim = 180;
+      // Use a UNIFORM scale based on the full frame size so that all directions/frames of the
+      // sheet keep the same pixel density. If we scaled by each frame's crop instead, every
+      // direction would get a different destH/destY, making the head jump up/down while turning.
       const maxDim = Math.max(frameW, frameH);
       const scale = isPixelMode
         ? Math.max(1, Math.floor(targetMaxDim / maxDim))
         : (targetMaxDim / maxDim);
 
-      let destW = Math.floor(frameW * scale);
-      let destH = Math.floor(frameH * scale);
+      let destW = Math.floor(srcW * scale);
+      let destH = Math.floor(srcH * scale);
 
       if (destH > 180) {
         const ratio = 180 / destH;
@@ -1053,28 +1138,50 @@ export class Game3DRenderer {
 
       debugDestX = destX;
       debugDestY = destY;
-      debugDestW = destW;
-      debugDestH = destH;
+      debugDestW = srcW;
+      debugDestH = srcH;
 
-      // Draw original sprite artwork WITHOUT shadow blur so pixels remain 100% crisp and unpolluted
-      ctx.drawImage(img, sx, sy, frameW, frameH, destX, destY, destW, destH);
+      // Draw original sprite artwork WITHOUT shadow blur so pixels remain 100% crisp and unpolluted.
+      // The body layer is chroma-keyed into its own canvas here so that the layering below
+      // can safely composite overlays (head/armor sheets that are also magenta-JPEGs) on top of
+      // it without their magenta background covering the body.
+      const bodyGhostAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = 1;
+      const bodyLayer = drawLayerWithMagentaKey(img, srcX, srcY, srcW, srcH, 0, 0, destW, destH, bodyGhostAlpha);
+      ctx.drawImage(bodyLayer, destX, destY);
 
-      // Apply layered overlays (e.g. head on top of body). Overlay sheets share the
-      // same grid/frame size, so the matching cell is drawn at the exact same dest rect.
+      // Apply overlays (e.g. head on top of body). Overlay sheets share the same grid/frame
+      // size, so the matching cell is drawn at the same dest rect. The same content crop is
+      // applied to the overlay source so head and body stay aligned. Each overlay is its own
+      // chroma-keyed layer so only its real pixels are drawn over the body.
       for (const overlayUrl of overlaySpriteUrls) {
         const overlayImg = overlayUrl ? this.getOrLoadImage(overlayUrl) : null;
         if (!overlayImg) continue;
         const oFrameW = Math.floor(overlayImg.width / 4);
         const oFrameH = Math.floor(overlayImg.height / 4);
-        const oSx = Math.floor((animFrame % 4) * oFrameW);
-        let oSy = Math.floor(0 * oFrameH);
-        if (facing === 'left') oSy = Math.floor(1 * oFrameH);
-        else if (facing === 'right') oSy = Math.floor(2 * oFrameH);
-        else if (facing === 'up') oSy = Math.floor(3 * oFrameH);
-        ctx.drawImage(overlayImg, oSx, oSy, oFrameW, oFrameH, destX, destY, destW, destH);
+        const oSx = Math.floor((animFrame % 4) * oFrameW) + (frameCrop ? frameCrop.x : 0);
+        let oSy = Math.floor(0 * oFrameH) + (frameCrop ? frameCrop.y : 0);
+        if (facing === 'left') oSy = Math.floor(1 * oFrameH) + (frameCrop ? frameCrop.y : 0);
+        else if (facing === 'right') oSy = Math.floor(2 * oFrameH) + (frameCrop ? frameCrop.y : 0);
+        else if (facing === 'up') oSy = Math.floor(3 * oFrameH) + (frameCrop ? frameCrop.y : 0);
+        const overlayLayer = drawLayerWithMagentaKey(
+          overlayImg,
+          oSx,
+          oSy,
+          srcW,
+          srcH,
+          0,
+          0,
+          destW,
+          destH,
+          bodyGhostAlpha
+        );
+        ctx.drawImage(overlayLayer, destX, destY);
       }
+      ctx.globalAlpha = bodyGhostAlpha;
 
-      // Convert any magenta chroma-key background to transparent (JPEG spritesheets)
+      // Convert any remaining magenta chroma-key background to transparent (JPEG spritesheets).
+      // Applied after layering as a safety net for any stray magenta edges.
       applyMagentaKeyToCanvas(canvas);
     } else {
       // Fallback emoji icon while loading
