@@ -96,6 +96,9 @@ export class Game3DRenderer {
   private vfxGroup: THREE.Group;
   private lightGroup: THREE.Group;
   private telegraphGroup: THREE.Group;
+  private telegraphPool: THREE.Mesh[] = [];
+  private telegraphArriviste: THREE.Mesh[] = [];
+  private telegraphPoolMax = 16;
 
   // Active meshes with 2.5D dynamic normal mapping
   private playerMesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial> | null = null;
@@ -292,14 +295,27 @@ export class Game3DRenderer {
     sprite: string;
     glowColor: string;
     name: string;
-    hpPct: number;
     spriteUrl: string;
     facing: 'up' | 'down' | 'left' | 'right';
     isBoss: boolean;
+    batchBaseKey: string;
   }> = new Map();
   private mobsNeedTextureRefresh: boolean = false;
   private mobWalkDistances: Map<string, number> = new Map();
   private mobLastAnimFrames: Map<string, number> = new Map();
+  private mobHpBarSprites: Map<string, THREE.Sprite> = new Map();
+  private mobHpBarTextures: Map<string, { texture: THREE.CanvasTexture; lastHpBucket: number }> = new Map();
+
+  // --- Performance profiling counters (lightweight, only incremented) ---
+  private perfStats = {
+    spriteTextureMisses: 0,
+    pbrTextureMisses: 0,
+    hpBarUpdates: 0,
+    fpsAccum: 0,
+    fpsFrames: 0,
+    fps: 0,
+    lastFpsSample: 0,
+  };
 
   // State & Pixel Perfect Debug Engine
   private currentMapId: string = '';
@@ -908,6 +924,13 @@ export class Game3DRenderer {
     this.mobWalkDistances.clear();
     this.mobLastAnimFrames.clear();
     this.mobRenderParams.clear();
+    this.mobHpBarSprites.forEach((sprite, id) => {
+      this.entityGroup.remove(sprite);
+      (sprite.material as THREE.SpriteMaterial).map?.dispose();
+      sprite.material.dispose();
+    });
+    this.mobHpBarSprites.clear();
+    this.mobHpBarTextures.clear();
     this.tileGroup.clear();
     this.chestMeshes.clear();
     this.gatherMeshes.clear();
@@ -932,8 +955,6 @@ export class Game3DRenderer {
         npc.sprite,
         npc.color,
         npc.name,
-        false,
-        1.0,
         false,
         npcUrl,
         'down',
@@ -961,8 +982,6 @@ export class Game3DRenderer {
     glowColor: string,
     label?: string,
     isGhost = false,
-    hpPercent = 1.0,
-    showHp = false,
     spriteUrl?: string,
     facing: 'up' | 'down' | 'left' | 'right' = 'down',
     animFrame: number = 0,
@@ -1075,22 +1094,6 @@ export class Game3DRenderer {
       ctx.fillText(label, 128, 22);
     }
 
-    // Health bar on bottom
-    if (showHp) {
-      const barW = 160;
-      const barH = 10;
-      const barX = Math.floor((256 - barW) / 2);
-      const barY = 244;
-
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(0,0,0,0.85)';
-      ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
-
-      const fillW = Math.floor(Math.max(0, Math.min(barW, barW * hpPercent)));
-      ctx.fillStyle = hpPercent > 0.5 ? '#22c55e' : hpPercent > 0.25 ? '#eab308' : '#ef4444';
-      ctx.fillRect(barX, barY, fillW, barH);
-    }
-
     // DEBUG VISUALIZER OVERLAY (Draw bounds & collision box debugging)
     if (this.showDebugBounds) {
       ctx.save();
@@ -1181,8 +1184,6 @@ export class Game3DRenderer {
     glowColor: string,
     label?: string,
     isGhost = false,
-    hpPercent = 1.0,
-    showHp = false,
     spriteUrl?: string,
     facing: 'up' | 'down' | 'left' | 'right' = 'down',
     animFrame: number = 0,
@@ -1191,7 +1192,7 @@ export class Game3DRenderer {
     const isPixelMode = this.pixelPerfectEnabled;
     const isDebug = this.showDebugBounds;
     const overlaysKey = overlaySpriteUrls.join('|');
-    const key = `${spriteUrl || emojiOrIcon}_${overlaysKey}_${glowColor}_${label || ''}_${isGhost}_${Math.round(hpPercent * 10)}_${showHp}_${facing}_${animFrame}_pp${isPixelMode}_dbg${isDebug}`;
+    const key = `${spriteUrl || emojiOrIcon}_${overlaysKey}_${glowColor}_${label || ''}_${isGhost}_${facing}_${animFrame}_pp${isPixelMode}_dbg${isDebug}`;
 
     let texture = this.getCachedSpriteTexture(key);
     let normalTexture: THREE.Texture | undefined;
@@ -1199,13 +1200,12 @@ export class Game3DRenderer {
     let metalnessTexture: THREE.Texture | undefined;
 
     if (!texture) {
+      this.perfStats.spriteTextureMisses++;
       const canvas = this.renderSpriteCanvas(
         emojiOrIcon,
         glowColor,
         label,
         isGhost,
-        hpPercent,
-        showHp,
         spriteUrl,
         facing,
         animFrame,
@@ -1272,8 +1272,6 @@ export class Game3DRenderer {
     glowColor: string,
     label?: string,
     isGhost = false,
-    hpPercent = 1.0,
-    showHp = false,
     spriteUrl?: string,
     facing: 'up' | 'down' | 'left' | 'right' = 'down',
     animFrame: number = 0
@@ -1283,12 +1281,94 @@ export class Game3DRenderer {
       glowColor,
       label,
       isGhost,
-      hpPercent,
-      showHp,
       spriteUrl,
       facing,
       animFrame
     ).texture;
+  }
+
+  // --- MOB HP BAR SPRITE SYSTEM ---
+  private createHpBarTexture(hpPercent: number): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d')!;
+
+    const barW = 160;
+    const barH = 10;
+    const barX = Math.floor((256 - barW) / 2);
+    const barY = 3;
+
+    ctx.clearRect(0, 0, 256, 16);
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+
+    const fillW = Math.floor(Math.max(0, Math.min(barW, barW * hpPercent)));
+    ctx.fillStyle = hpPercent > 0.5 ? '#22c55e' : hpPercent > 0.25 ? '#eab308' : '#ef4444';
+    ctx.fillRect(barX, barY, fillW, barH);
+
+    return canvas;
+  }
+
+  private updateMobHpBar(mob: ActiveMob, renderX: number, renderY: number, scale: number): void {
+    const hpPct = mob.currentHp / mob.maxHp;
+    const hpBucket = Math.round(hpPct * 20);
+
+    const existing = this.mobHpBarTextures.get(mob.instanceId);
+    if (existing && existing.lastHpBucket === hpBucket) {
+      const sprite = this.mobHpBarSprites.get(mob.instanceId);
+      if (sprite) {
+        const barScale = scale * 0.65;
+        sprite.scale.set(barScale * 1.6, barScale * 0.1, 1);
+        sprite.position.set(renderX, 0.12, renderY);
+      }
+      return;
+    }
+    this.perfStats.hpBarUpdates++;
+
+    const canvas = this.createHpBarTexture(hpPct);
+    let sprite = this.mobHpBarSprites.get(mob.instanceId);
+
+    if (!sprite) {
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.generateMipmaps = false;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestFilter;
+      texture.colorSpace = THREE.SRGBColorSpace;
+
+      const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+      sprite = new THREE.Sprite(mat);
+      sprite.frustumCulled = false;
+      this.entityGroup.add(sprite);
+      this.mobHpBarSprites.set(mob.instanceId, sprite);
+      this.mobHpBarTextures.set(mob.instanceId, { texture, lastHpBucket: hpBucket });
+    } else {
+      const texData = this.mobHpBarTextures.get(mob.instanceId)!;
+      const oldTex = (sprite.material as THREE.SpriteMaterial).map as THREE.CanvasTexture;
+      (sprite.material as THREE.SpriteMaterial).map = new THREE.CanvasTexture(canvas);
+      (sprite.material as THREE.SpriteMaterial).map!.generateMipmaps = false;
+      (sprite.material as THREE.SpriteMaterial).map!.magFilter = THREE.NearestFilter;
+      (sprite.material as THREE.SpriteMaterial).map!.minFilter = THREE.NearestFilter;
+      (sprite.material as THREE.SpriteMaterial).map!.colorSpace = THREE.SRGBColorSpace;
+      texData.texture = (sprite.material as THREE.SpriteMaterial).map as THREE.CanvasTexture;
+      if (oldTex) oldTex.dispose();
+      texData.lastHpBucket = hpBucket;
+    }
+
+    const barScale = scale * 0.65;
+    sprite.scale.set(barScale * 1.6, barScale * 0.1, 1);
+    sprite.position.set(renderX, 0.12, renderY);
+  }
+
+  private cleanupMobHpBar(instanceId: string): void {
+    const sprite = this.mobHpBarSprites.get(instanceId);
+    if (sprite) {
+      this.entityGroup.remove(sprite);
+      (sprite.material as THREE.SpriteMaterial).map?.dispose();
+      sprite.material.dispose();
+      this.mobHpBarSprites.delete(instanceId);
+      this.mobHpBarTextures.delete(instanceId);
+    }
   }
 
   // --- ENTITY UPDATE LOOP ---
@@ -1356,7 +1436,6 @@ export class Game3DRenderer {
 
     activeMobs.forEach((mob) => {
       currentMobIds.add(mob.instanceId);
-      const hpPct = mob.currentHp / mob.maxHp;
       const isBoss = mob.isBoss;
       const mobUrl = DEFAULT_MOB_SPRITE;
       const mobFacing = mob.facing || 'down';
@@ -1366,17 +1445,16 @@ export class Game3DRenderer {
         sprite: mob.sprite,
         glowColor,
         name: mob.name,
-        hpPct,
         spriteUrl: mobUrl,
         facing: mobFacing,
         isBoss,
+        batchBaseKey: `${mobUrl || mob.sprite}_${glowColor}_${mob.name}_${mobFacing}`,
       };
 
       const existingMobParams = this.mobRenderParams.get(mob.instanceId);
       if (
         !existingMobParams ||
         existingMobParams.facing !== newMobParams.facing ||
-        existingMobParams.hpPct !== newMobParams.hpPct ||
         existingMobParams.glowColor !== newMobParams.glowColor
       ) {
         this.mobsNeedTextureRefresh = true;
@@ -1391,6 +1469,7 @@ export class Game3DRenderer {
         this.mobRenderParams.delete(instanceId);
         this.mobWalkDistances.delete(instanceId);
         this.mobLastAnimFrames.delete(instanceId);
+        this.cleanupMobHpBar(instanceId);
       }
     });
 
@@ -1539,23 +1618,50 @@ export class Game3DRenderer {
       }
     }
 
-    // 4. Boss Telegraph AoE Zones (§5.9) — dispose previous frame's resources (P4)
-    this.disposeGroupChildren(this.telegraphGroup);
+    // 4. Boss Telegraph AoE Zones (§5.9) — pooled geometry reuse
+    const arrivalTelegraphs: THREE.Mesh[] = [];
+    let telegraphIdx = 0;
     activeMobs.forEach((mob) => {
       if (mob.state === 'telegraphing' && mob.telegraphRadius) {
-        const circleGeo = new THREE.RingGeometry(0.2, mob.telegraphRadius, 32);
-        const circleMat = new THREE.MeshBasicMaterial({
-          color: 0xef4444,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.6,
-        });
-        const mesh = new THREE.Mesh(circleGeo, circleMat);
-        mesh.rotation.x = -Math.PI / 2;
+        let mesh: THREE.Mesh;
+        if (telegraphIdx < this.telegraphPool.length) {
+          mesh = this.telegraphPool[telegraphIdx];
+        } else {
+          const circleGeo = new THREE.RingGeometry(0.2, 1, 32);
+          const circleMat = new THREE.MeshBasicMaterial({
+            color: 0xef4444,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.6,
+          });
+          mesh = new THREE.Mesh(circleGeo, circleMat);
+          mesh.rotation.x = -Math.PI / 2;
+          this.telegraphGroup.add(mesh);
+          if (this.telegraphPool.length < this.telegraphPoolMax) {
+            this.telegraphPool.push(mesh);
+          } else {
+            arrivalTelegraphs.push(mesh);
+          }
+        }
+        const ringGeo = mesh.geometry as THREE.RingGeometry;
+        if (ringGeo.parameters.innerRadius !== 0.2 || ringGeo.parameters.outerRadius !== mob.telegraphRadius) {
+          mesh.geometry.dispose();
+          mesh.geometry = new THREE.RingGeometry(0.2, mob.telegraphRadius, 32);
+        }
+        mesh.visible = true;
         mesh.position.set(mob.x, 0.08, mob.y);
-        this.telegraphGroup.add(mesh);
+        telegraphIdx++;
       }
     });
+    for (let i = telegraphIdx; i < this.telegraphPool.length; i++) {
+      this.telegraphPool[i].visible = false;
+    }
+    this.telegraphArriviste.forEach(m => {
+      this.telegraphGroup.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
+    this.telegraphArriviste = arrivalTelegraphs;
   }
 
   /**
@@ -2068,6 +2174,16 @@ export class Game3DRenderer {
       const deltaTime = Math.min(0.05, (now - this.lastFrameTime) / 1000); // Clamp deltaTime to avoid giant jumps
       this.lastFrameTime = now;
 
+      // FPS sampling (every ~500ms)
+      this.perfStats.fpsAccum += deltaTime;
+      this.perfStats.fpsFrames++;
+      if (now - this.perfStats.lastFpsSample > 500) {
+        this.perfStats.fps = this.perfStats.fpsFrames / this.perfStats.fpsAccum;
+        this.perfStats.fpsFrames = 0;
+        this.perfStats.fpsAccum = 0;
+        this.perfStats.lastFpsSample = now;
+      }
+
       // Animated world fluids (stylized water waves / lava pulse)
       this.envGen.update(deltaTime);
 
@@ -2177,8 +2293,6 @@ export class Game3DRenderer {
               this.playerRenderParams.glowColor,
               this.playerRenderParams.name,
               this.playerRenderParams.isStealthed,
-              1.0,
-              false,
               this.playerRenderParams.spriteUrl,
               this.playerRenderParams.facing,
               pAnimFrame,
@@ -2199,8 +2313,6 @@ export class Game3DRenderer {
               this.playerRenderParams.glowColor,
               this.playerRenderParams.name,
               this.playerRenderParams.isStealthed,
-              1.0,
-              false,
               this.playerRenderParams.spriteUrl,
               this.playerRenderParams.facing,
               pAnimFrame,
@@ -2287,8 +2399,6 @@ export class Game3DRenderer {
           mobData.glowColor,
           mobData.name,
           false,
-          mobData.hpPct,
-          true,
           mobData.spriteUrl,
           mobData.facing,
           mobAnimFrame
@@ -2296,7 +2406,7 @@ export class Game3DRenderer {
 
         const isPixelMode = this.pixelPerfectEnabled;
         const isDebug = this.showDebugBounds;
-        const batchKey = `${mobData.spriteUrl || mobData.sprite}_${mobData.glowColor}_${mobData.name}_${Math.round(mobData.hpPct * 10)}_${mobData.facing}_${mobAnimFrame}_pp${isPixelMode}_dbg${isDebug}`;
+        const batchKey = `${mobData.batchBaseKey}_${mobAnimFrame}_pp${isPixelMode}_dbg${isDebug}`;
 
         const renderMx = this.snapVal(smoothMob.x);
         const renderMy = this.snapVal(smoothMob.y);
@@ -2318,6 +2428,8 @@ export class Game3DRenderer {
         );
 
         this.instancingManager.packShadowInstance(renderMx, renderMy, mobData.isBoss ? 0.75 : 0.38);
+
+        this.updateMobHpBar(mob, renderMx, renderMy, mScale);
       });
       this.mobsNeedTextureRefresh = false;
 
@@ -2758,6 +2870,30 @@ export class Game3DRenderer {
     this.postProcessingManager.applyPreset(mode);
   }
 
+  // --- PERFORMANCE PROFILE SNAPSHOT ---
+  public getPerfStats(): object {
+    return {
+      fps: Math.round(this.perfStats.fps * 10) / 10,
+      spriteTextureMisses: this.perfStats.spriteTextureMisses,
+      hpBarUpdates: this.perfStats.hpBarUpdates,
+      spriteTextureCacheSize: this.spriteTextureCache.size,
+      pbrCache: { ...this.pbrGenerator.perfCounters },
+      batch: { ...this.instancingManager.perfCounters },
+      activeBatches: this.instancingManager.getBatchCount?.(),
+    };
+  }
+
+  public resetPerfStats(): void {
+    this.perfStats.spriteTextureMisses = 0;
+    this.perfStats.pbrTextureMisses = 0;
+    this.perfStats.hpBarUpdates = 0;
+    this.pbrGenerator.perfCounters.cacheHits = 0;
+    this.pbrGenerator.perfCounters.cacheMisses = 0;
+    this.instancingManager.perfCounters.batchCreates = 0;
+    this.instancingManager.perfCounters.batchDisposals = 0;
+    this.instancingManager.perfCounters.batchHits = 0;
+  }
+
   public destroy() {
     this.isDestroyed = true;
     if (this.postProcessingManager) {
@@ -2772,9 +2908,15 @@ export class Game3DRenderer {
     this.disposeGroupChildren(this.entityGroup);
     this.disposeGroupChildren(this.vfxGroup);
     this.disposeGroupChildren(this.telegraphGroup);
+    this.telegraphPool.forEach(m => { m.geometry.dispose(); (m.material as THREE.Material).dispose(); });
+    this.telegraphPool = [];
+    this.telegraphArriviste.forEach(m => { m.geometry.dispose(); (m.material as THREE.Material).dispose(); });
+    this.telegraphArriviste = [];
     this.disposeGroupChildren(this.lightGroup);
     this.disposeGroupChildren(this.debugGroup);
 
+    this.mobHpBarSprites.clear();
+    this.mobHpBarTextures.clear();
     this.spriteTextureCache.forEach((tex) => tex.dispose());
     this.spriteTextureCache.clear();
     this.pbrGenerator.clearCaches();

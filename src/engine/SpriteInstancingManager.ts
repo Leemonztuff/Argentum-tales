@@ -20,6 +20,9 @@ export class SpriteInstancingManager {
   private shadowIndex: number = 0;
   private dummyObj: THREE.Object3D = new THREE.Object3D();
 
+  // Lightweight profiling counter
+  public perfCounters = { batchCreates: 0, batchDisposals: 0, batchHits: 0 };
+
   constructor(entityGroup: THREE.Group) {
     this.entityGroup = entityGroup;
 
@@ -83,6 +86,7 @@ export class SpriteInstancingManager {
   ): void {
     let batch = this.mobInstancedBatches.get(batchKey);
     if (!batch) {
+      this.perfCounters.batchCreates++;
       const mat = createMaterialCallback();
       const instancedMesh = new THREE.InstancedMesh(this.sharedBillboardGeometry, mat, 256);
       instancedMesh.frustumCulled = false;
@@ -94,8 +98,11 @@ export class SpriteInstancingManager {
         activeCount: 0,
       };
       this.mobInstancedBatches.set(batchKey, batch);
-    } else if (updateMaterialCallback) {
-      updateMaterialCallback(batch.material);
+    } else {
+      this.perfCounters.batchHits++;
+      if (updateMaterialCallback) {
+        updateMaterialCallback(batch.material);
+      }
     }
 
     const idx = batch.activeCount;
@@ -129,6 +136,7 @@ export class SpriteInstancingManager {
     for (const key of emptyKeys) {
       const batch = this.mobInstancedBatches.get(key);
       if (!batch) continue;
+      this.perfCounters.batchDisposals++;
       this.mobInstancedBatches.delete(key);
       this.entityGroup.remove(batch.instancedMesh);
       batch.instancedMesh.dispose();
@@ -164,6 +172,10 @@ export class SpriteInstancingManager {
       }
     }
     return undefined;
+  }
+
+  public getBatchCount(): number {
+    return this.mobInstancedBatches.size;
   }
 
   public setNormalMapEnabled(enabled: boolean): void {

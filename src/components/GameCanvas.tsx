@@ -18,7 +18,7 @@ interface GameCanvasProps {
   rendererRef: React.MutableRefObject<Game3DRenderer | null>;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({
+const GameCanvasBase: React.FC<GameCanvasProps> = ({
   currentMap,
   player,
   activeMobs,
@@ -172,6 +172,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     const renderer = new Game3DRenderer(containerRef.current);
     rendererRef.current = renderer;
+
+    // Dev profiling hook: expose stats snapshot + reset on window for console measurement
+    (window as any).__gamePerf = {
+      stats: () => renderer.getPerfStats(),
+      reset: () => renderer.resetPerfStats(),
+    };
     
     // Wire up map rendering callback
     renderer.setOnMapRenderedCallback(() => {
@@ -987,3 +993,57 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     </div>
   );
 };
+
+// Memoized: only re-render when the values that actually drive the 3D scene
+// and targeting reticle change. Prevents GameCanvas from re-rendering on every
+// incidental parent state change (HUD-only updates, etc.).
+function areGameCanvasPropsEqual(prev: GameCanvasProps, next: GameCanvasProps): boolean {
+  if (prev.currentMap.id !== next.currentMap.id) return false;
+  if (prev.rendererRef !== next.rendererRef) return false;
+  if (prev.onSelectTarget !== next.onSelectTarget) return false;
+  if (prev.onPlayerMove !== next.onPlayerMove) return false;
+
+  // Possibly equal — compare scalar fields that affect the HUD/entities.
+  if (prev.floatingTexts !== next.floatingTexts) {
+    if (prev.floatingTexts.length !== next.floatingTexts.length) return false;
+    for (let i = 0; i < prev.floatingTexts.length; i++) {
+      if (prev.floatingTexts[i] !== next.floatingTexts[i]) return false;
+    }
+  }
+
+  const pp = prev.player;
+  const np = next.player;
+  if (
+    pp.x !== np.x ||
+    pp.y !== np.y ||
+    pp.facing !== np.facing ||
+    pp.currentHp !== np.currentHp ||
+    pp.maxHp !== np.maxHp
+  ) {
+    return false;
+  }
+
+  if (prev.selectedTarget !== next.selectedTarget) return false;
+
+  // Compare mobs by the fields that drive rendering: identity + position + hp.
+  if (prev.activeMobs !== next.activeMobs) {
+    if (prev.activeMobs.length !== next.activeMobs.length) return false;
+    for (let i = 0; i < prev.activeMobs.length; i++) {
+      const a = prev.activeMobs[i];
+      const b = next.activeMobs[i];
+      if (
+        a.instanceId !== b.instanceId ||
+        a.x !== b.x ||
+        a.y !== b.y ||
+        a.currentHp !== b.currentHp ||
+        a.state !== b.state
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+export const GameCanvas = React.memo(GameCanvasBase, areGameCanvasPropsEqual);
