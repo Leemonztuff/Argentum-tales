@@ -1335,9 +1335,10 @@ export class Game3DRenderer {
     const img = this.getOrLoadImage(spriteUrl);
     if (!img) return null;
 
-    // Create main texture with 4×4 repeat, flipY=false since spritesheet row 0 is at top of image
+    // Create main texture with 4×4 repeat
+    // flipY=true (Three.js default): spritesheet row 0 at top of image maps to bottom of texture UV
+    // This matches renderSpriteCanvas layout: down=row0(top), left=row1, right=row2, up=row3(bottom)
     const tex = new THREE.Texture(img);
-    tex.flipY = false;
     tex.repeat.set(0.25, 0.25);
     tex.offset.set(0, 0);
     tex.wrapS = THREE.ClampToEdgeWrapping;
@@ -1366,7 +1367,6 @@ export class Game3DRenderer {
     ];
     for (const [k, t] of pbrEntries) {
       if (!t) continue;
-      t.flipY = false;
       t.repeat.set(0.25, 0.25);
       t.offset.set(0, 0);
       t.wrapS = THREE.ClampToEdgeWrapping;
@@ -2555,10 +2555,11 @@ export class Game3DRenderer {
             const bodySprite = new THREE.Sprite(bodyMat);
             bodySprite.position.set(0, 0.5, 0);
 
-            // Head Sprite: small, positioned above body top (neck pivot at body top ≈ y=1.0)
+            // Head Sprite: head cell ~193px vs body ~263px ≈ 73% width
             const headSprite = new THREE.Sprite(headMat);
-            headSprite.scale.set(0.3, 0.3, 1);
-            headSprite.position.set(0, 1.0 - 0.075, 0);
+            headSprite.scale.set(0.73, 0.73, 1);
+            // Pivot at neck (75% from bottom of head cell) → align to body top (y=1.0)
+            headSprite.position.set(0, 1.0 - 0.1825, 0);
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(bodySprite);
