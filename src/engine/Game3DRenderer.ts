@@ -1394,12 +1394,14 @@ export class Game3DRenderer {
     if (!texture) return;
     const col = animFrame % 4;
     let row = 0;
-    // Spritesheet layout with flipY=false: row 0=down/south, 1=left, 2=right, 3=up/north
+    // Spritesheet layout with flipY=true: row 0=down/south(top), 1=left, 2=right, 3=up/bottom
+    // Left-facing frames are horizontally mirrored → reverse offset.x
+    const colX = facing === 'left' ? (3 - col) : col;
     if (facing === 'down') row = 0;
     else if (facing === 'left') row = 1;
     else if (facing === 'right') row = 2;
     else if (facing === 'up') row = 3;
-    texture.offset.set(col * 0.25, row * 0.25);
+    texture.offset.set(colX * 0.25, row * 0.25);
   }
 
   public getOrCreateSpriteTextures(
@@ -2555,11 +2557,11 @@ export class Game3DRenderer {
             const bodySprite = new THREE.Sprite(bodyMat);
             bodySprite.position.set(0, 0.5, 0);
 
-            // Head Sprite: head cell ~193px vs body ~263px ≈ 73% width
+            // Head Sprite: smaller than body cell (~73% width), pivot at neck
             const headSprite = new THREE.Sprite(headMat);
-            headSprite.scale.set(0.73, 0.73, 1);
-            // Pivot at neck (75% from bottom of head cell) → align to body top (y=1.0)
-            headSprite.position.set(0, 1.0 - 0.1825, 0);
+            headSprite.scale.set(0.5, 0.5, 1);
+            // Pivot at neck (75% from bottom of head cell) → align to body top y=1.0
+            headSprite.position.set(0, 1.0 - 0.125, 0);
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(bodySprite);
