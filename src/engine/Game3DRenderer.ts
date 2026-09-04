@@ -1392,8 +1392,8 @@ export class Game3DRenderer {
     if (!texture) return;
     const col = animFrame % 4;
     let row = 0;
-    if (facing === 'left') row = 1;
-    else if (facing === 'right') row = 2;
+    if (facing === 'left') row = 2;
+    else if (facing === 'right') row = 1;
     else if (facing === 'up') row = 3;
     texture.offset.set(col * 0.25, row * 0.25);
   }
@@ -2547,15 +2547,13 @@ export class Game3DRenderer {
 
             const pScale = this.getPixelPerfectSpriteScale(false);
 
-            // Body Sprite: pivot bottom-center → bottom at Group origin
+            // Body Sprite: pivot bottom-center → bottom at Group origin (local y=0)
             const bodySprite = new THREE.Sprite(bodyMat);
-            bodySprite.scale.set(pScale, pScale, 1);
             bodySprite.position.set(0, 0, 0);
 
-            // Head Sprite: pivot neck (0.75 height), positioned at 0.65 * bodyHeight
+            // Head Sprite: pivot neck (0.75 height), positioned at 0.65 * bodyHeight in local coords
             const headSprite = new THREE.Sprite(headMat);
-            headSprite.scale.set(pScale, pScale, 1);
-            headSprite.position.set(0, pScale * 0.65, 0);
+            headSprite.position.set(0, 0.65, 0);
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(bodySprite);
