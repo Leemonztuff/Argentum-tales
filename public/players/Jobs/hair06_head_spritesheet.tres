@@ -1,0 +1,92 @@
+[gd_resource type="SpriteFrames" load_steps=18 format=3]
+
+[ext_resource type="Texture2D" path="res://hair06_head_spritesheet.png" id="1_sheet"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_000.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(0, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_001.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(128, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_002.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(256, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_003.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(384, 0, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_004.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(0, 128, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_005.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(128, 128, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_006.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(256, 128, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_007.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(384, 128, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_008.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(0, 256, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_009.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(128, 256, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_010.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(256, 256, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_011.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(384, 256, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_012.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(0, 384, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_013.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(128, 384, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_014.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(256, 384, 128, 128)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_frame_015.png"]
+atlas = ExtResource("1_sheet")
+region = Rect2(384, 384, 128, 128)
+
+[resource]
+animations = [{
+"frames": [
+SubResource("AtlasTexture_frame_000.png"),
+SubResource("AtlasTexture_frame_001.png"),
+SubResource("AtlasTexture_frame_002.png"),
+SubResource("AtlasTexture_frame_003.png"),
+SubResource("AtlasTexture_frame_004.png"),
+SubResource("AtlasTexture_frame_005.png"),
+SubResource("AtlasTexture_frame_006.png"),
+SubResource("AtlasTexture_frame_007.png"),
+SubResource("AtlasTexture_frame_008.png"),
+SubResource("AtlasTexture_frame_009.png"),
+SubResource("AtlasTexture_frame_010.png"),
+SubResource("AtlasTexture_frame_011.png"),
+SubResource("AtlasTexture_frame_012.png"),
+SubResource("AtlasTexture_frame_013.png"),
+SubResource("AtlasTexture_frame_014.png"),
+SubResource("AtlasTexture_frame_015.png")
+],
+"loop": true,
+"name": &"default",
+"speed": 10.0
+}]
