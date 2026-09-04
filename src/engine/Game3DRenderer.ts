@@ -2553,15 +2553,16 @@ export class Game3DRenderer {
 
             const pScale = this.getPixelPerfectSpriteScale(false);
 
-            // Body Sprite: pivot bottom-center → bottom at y=0 in local coords
+            // Body Sprite: pivot bottom-center (JSON pivot y=1.0) → bottom at y=0 in local coords
             const bodySprite = new THREE.Sprite(bodyMat);
             bodySprite.position.set(0, 0.5, 0);
 
-            // Head Sprite: smaller than body cell (~73% width), pivot at neck
+            // Head Sprite: same size as body, drawn on top. Pivot at neck (75% from bottom of head cell)
+            // Head frame extends y=0 (waist/bottom) to y=1 (face/top). Neck at y=0.75.
+            // Position so neck aligns with body top (y=1.0): position.y = 1.0 - 0.25 = 0.75
             const headSprite = new THREE.Sprite(headMat);
-            headSprite.scale.set(0.5, 0.5, 1);
-            // Pivot at neck (75% from bottom of head cell) → align to body top y=1.0
-            headSprite.position.set(0, 1.0 - 0.125, 0);
+            headSprite.scale.set(1, 1, 1);
+            headSprite.position.set(0, 0.75, 0);
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(bodySprite);
