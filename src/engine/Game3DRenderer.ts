@@ -1392,10 +1392,14 @@ export class Game3DRenderer {
     if (!texture) return;
     const col = animFrame % 4;
     let row = 0;
-    if (facing === 'left') row = 2;
-    else if (facing === 'right') row = 1;
+    // Spritesheet layout: row 0=top(up/north), row 1=left, row 2=right, row 3=bottom(down/south)
+    // Texture UV: offset.y=0 is bottom, so invert with (3-row)*0.25
+    if (facing === 'down') row = 0;
+    else if (facing === 'left') row = 1;
+    else if (facing === 'right') row = 2;
     else if (facing === 'up') row = 3;
-    texture.offset.set(col * 0.25, row * 0.25);
+    const offsetY = (3 - row) * 0.25;
+    texture.offset.set(col * 0.25, offsetY);
   }
 
   public getOrCreateSpriteTextures(
@@ -2551,9 +2555,11 @@ export class Game3DRenderer {
             const bodySprite = new THREE.Sprite(bodyMat);
             bodySprite.position.set(0, 0, 0);
 
-            // Head Sprite: pivot neck (0.75 height), positioned at 0.65 * bodyHeight in local coords
+            // Head Sprite: smaller than body (head cell ~193px vs body ~263px)
+            // Position at body neck (local y ≈ 0.70). Sprite centered, extends ±0.5 * 0.73
             const headSprite = new THREE.Sprite(headMat);
-            headSprite.position.set(0, 0.65, 0);
+            headSprite.scale.set(0.73, 0.73, 1);
+            headSprite.position.set(0, 0.70, 0);
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(bodySprite);
