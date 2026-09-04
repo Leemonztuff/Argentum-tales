@@ -25,15 +25,17 @@ export const NPC_SPRITES: Record<string, string> = {
 export const DEFAULT_NPC_SPRITE = SPRITESHEETS.luci;
 export const DEFAULT_MOB_SPRITE = SPRITESHEETS.explorer;
 
-// Composable human sprite parts (local, magenta-keyed JPEGs). Body and head are
-// separate sheets of identical grid/size; the head overlays the body at the same
-// cell so pivots always align. Swap the body to change the outfit, swap the head
-// to change the hairstyle.
+// Composable human sprite parts. Body and head are separate 4×4 spritesheets
+// loaded via texture.repeat + offset in the 3D renderer. Body pivot = bottom
+// center, head pivot = neck (~0.75 height). Head is positioned at
+// neckY = 0.65 * bodyHeight relative to the body's top. Both sprites share
+// the same frame index and direction row. Swap the body to change the outfit,
+// swap the head to change the hairstyle.
 export const BODY_SPRITES: Record<string, string> = {
-  humano02: '/players/races_body_base/humano02.jpeg',
+  humano02: '/players/Jobs/Mago_clothes01_body01.png',
 };
 
 export const HEAD_SPRITES: Record<string, string> = {
-  head_humano02: '/players/races_body_base/head_humano02.jpeg',
-  head_humano02_hairtyle01: '/players/races_body_base/head_humano02_hairtyle01.jpeg',
+  head_humano02: '/players/Jobs/base_head_spritesheet.png',
+  head_humano02_hairtyle01: '/players/Jobs/base_head_spritesheet.png',
 };
