@@ -173,8 +173,8 @@ export class Game3DRenderer {
   private telegraphArriviste: THREE.Mesh[] = [];
   private telegraphPoolMax = 16;
 
-  // Active meshes with 2.5D dynamic normal mapping
-  private playerMesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial> | null = null;
+  // Player 2.5D sprite: Object3D with body + head Sprites using texture.repeat + offset
+  private playerGroup: THREE.Group | null = null;
   private playerLight: THREE.PointLight | null = null;
   private dirLight: THREE.DirectionalLight | null = null;
   private hemiLight: THREE.HemisphereLight | null = null;
@@ -228,25 +228,33 @@ export class Game3DRenderer {
     this.pbrGenerator.spriteNormalEnabled = enabled;
     this.playerNeedsTextureRefresh = true;
     this.mobsNeedTextureRefresh = true;
-    if (this.playerMesh && this.playerMesh.material) {
-      this.playerMesh.material.normalMap = enabled ? ((this.playerMesh.material.userData.normalMap as THREE.Texture) || null) : null;
-      this.playerMesh.material.needsUpdate = true;
-    }
-    this.instancingManager.setNormalMapEnabled(enabled);
-    this.npcSprites.forEach((mesh) => {
-      mesh.material.normalMap = enabled ? ((mesh.material.userData.normalMap as THREE.Texture) || null) : null;
-      mesh.material.needsUpdate = true;
-    });
-  }
+     const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
+     if (playerSprites.length > 0) {
+       playerSprites.forEach((sprite) => {
+         const m = sprite.material as any;
+         m.normalMap = enabled ? ((m.userData.normalMap as THREE.Texture) || null) : null;
+         sprite.material.needsUpdate = true;
+       });
+     }
+     this.instancingManager.setNormalMapEnabled(enabled);
+     this.npcSprites.forEach((mesh) => {
+       mesh.material.normalMap = enabled ? ((mesh.material.userData.normalMap as THREE.Texture) || null) : null;
+       mesh.material.needsUpdate = true;
+     });
+   }
 
-  public setSpriteNormalStrength(strength: number): void {
-    this.pbrGenerator.spriteNormalStrength = Math.max(0, Math.min(4.0, strength));
-    this.pbrGenerator.clearCaches();
-    this.playerNeedsTextureRefresh = true;
-    this.mobsNeedTextureRefresh = true;
-    if (this.playerMesh && this.playerMesh.material) {
-      this.playerMesh.material.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
-    }
+   public setSpriteNormalStrength(strength: number): void {
+     this.pbrGenerator.spriteNormalStrength = Math.max(0, Math.min(4.0, strength));
+     this.pbrGenerator.clearCaches();
+     this.playerNeedsTextureRefresh = true;
+     this.mobsNeedTextureRefresh = true;
+     const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
+     if (playerSprites.length > 0) {
+       playerSprites.forEach((sprite) => {
+         const m = sprite.material as any;
+         m.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
+       });
+     }
     this.instancingManager.setNormalScale(this.pbrGenerator.spriteNormalStrength);
     this.npcSprites.forEach((mesh) => {
       mesh.material.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
@@ -289,8 +297,9 @@ export class Game3DRenderer {
   }
 
   private updateSpriteShaderUniforms(): void {
-    const updateMaterial = (mat: THREE.MeshStandardMaterial | null) => {
-      if (!mat) return;
+    const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
+    playerSprites.forEach((sprite) => {
+      const mat = sprite.material as any;
       if (mat.userData && mat.userData.shader && mat.userData.shader.uniforms) {
         if (mat.userData.shader.uniforms.uSpecularIntensity) {
           mat.userData.shader.uniforms.uSpecularIntensity.value = this.spriteSpecularIntensity;
@@ -302,15 +311,26 @@ export class Game3DRenderer {
           mat.userData.shader.uniforms.uSpecularRimPower.value = this.spriteSpecularRimPower;
         }
       }
-    };
-
-    if (this.playerMesh) updateMaterial(this.playerMesh.material);
+    });
     this.instancingManager.updateSpecularUniforms(
       this.spriteSpecularIntensity,
       this.spriteSpecularShininess,
       this.spriteSpecularRimPower
     );
-    this.npcSprites.forEach((m) => updateMaterial(m.material));
+    this.npcSprites.forEach((m) => {
+      const mat = m.material as any;
+      if (mat.userData && mat.userData.shader && mat.userData.shader.uniforms) {
+        if (mat.userData.shader.uniforms.uSpecularIntensity) {
+          mat.userData.shader.uniforms.uSpecularIntensity.value = this.spriteSpecularIntensity;
+        }
+        if (mat.userData.shader.uniforms.uSpecularShininess) {
+          mat.userData.shader.uniforms.uSpecularShininess.value = this.spriteSpecularShininess;
+        }
+        if (mat.userData.shader.uniforms.uSpecularRimPower) {
+          mat.userData.shader.uniforms.uSpecularRimPower.value = this.spriteSpecularRimPower;
+        }
+      }
+    });
   }
 
   private getOrLoadImage(url: string): HTMLImageElement | null {
@@ -357,7 +377,7 @@ export class Game3DRenderer {
     isStealthed: boolean;
     facing: 'up' | 'down' | 'left' | 'right';
     spriteUrl: string;
-    overlaySpriteUrls: string[];
+    headUrl: string;
   } | null = null;
   private playerNeedsTextureRefresh: boolean = false;
   private playerWalkDistance: number = 0;
@@ -1286,6 +1306,98 @@ export class Game3DRenderer {
     }
   }
 
+  /**
+   * 4×4 Spritesheet renderer using texture.repeat + offset (no per-frame canvas).
+   * Loads the spritesheet once, creates THREE.Texture with repeat=(1/4,1/4),
+   * and generates PBR maps. Each frame is selected via texture.offset.
+   * Returns SpriteMaterialTextures; caller updates offset each frame.
+   */
+  public getOrCreateSpriteSheetTextures(
+    spriteUrl: string
+  ): SpriteMaterialTextures | null {
+    if (!spriteUrl) return null;
+    const isPixelMode = this.pixelPerfectEnabled;
+    const key = `sheet_${spriteUrl}_pp${isPixelMode}`;
+
+    const texture = this.getCachedSpriteTexture(key);
+    const normalKey = `pbr_normal_${spriteUrl}_pp${isPixelMode}`;
+    const roughnessKey = `pbr_roughness_${spriteUrl}_pp${isPixelMode}`;
+    const metalnessKey = `pbr_metalness_${spriteUrl}_pp${isPixelMode}`;
+    const normalTexture = this.getCachedSpriteTexture(normalKey);
+    const roughnessTexture = this.getCachedSpriteTexture(roughnessKey);
+    const metalnessTexture = this.getCachedSpriteTexture(metalnessKey);
+
+    if (texture && normalTexture && roughnessTexture && metalnessTexture) {
+      return { texture, normalTexture, roughnessTexture, metalnessTexture };
+    }
+
+    // Load image
+    const img = this.getOrLoadImage(spriteUrl);
+    if (!img) return null;
+
+    // Create main texture with 4×4 repeat
+    const tex = new THREE.Texture(img);
+    tex.repeat.set(0.25, 0.25);
+    tex.offset.set(0, 0);
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.generateMipmaps = false;
+    tex.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+    tex.minFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    this.setCachedSpriteTexture(key, tex);
+
+    // Generate PBR maps from the spritesheet image
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+
+    const generated = this.pbrGenerator.generateSpriteMaterialTextures(canvas, `sheet_${spriteUrl}_pp${isPixelMode}`);
+
+    // Apply same repeat + offset to all PBR maps and cache them
+    const pbrEntries: [string, THREE.Texture | undefined][] = [
+      [normalKey, generated.normalTexture],
+      [roughnessKey, generated.roughnessTexture],
+      [metalnessKey, generated.metalnessTexture],
+    ];
+    for (const [k, t] of pbrEntries) {
+      if (!t) continue;
+      t.repeat.set(0.25, 0.25);
+      t.offset.set(0, 0);
+      t.wrapS = THREE.ClampToEdgeWrapping;
+      t.wrapT = THREE.ClampToEdgeWrapping;
+      t.generateMipmaps = false;
+      t.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+      t.minFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+      t.needsUpdate = true;
+      this.setCachedSpriteTexture(k, t);
+    }
+
+    return { texture: tex, ...generated };
+  }
+
+  /**
+   * Updates texture.offset for a 4×4 spritesheet based on frame index and facing direction.
+   * Row mapping: 0=down/south, 1=left, 2=right, 3=up/north.
+   * Both body and head use the same frameIndex and row.
+   */
+  private setSpriteSheetOffset(
+    texture: THREE.Texture | null,
+    animFrame: number,
+    facing: 'up' | 'down' | 'left' | 'right'
+  ): void {
+    if (!texture) return;
+    const col = animFrame % 4;
+    let row = 0;
+    if (facing === 'left') row = 1;
+    else if (facing === 'right') row = 2;
+    else if (facing === 'up') row = 3;
+    texture.offset.set(col * 0.25, row * 0.25);
+  }
+
   public getOrCreateSpriteTextures(
     emojiOrIcon: string,
     glowColor: string,
@@ -1346,6 +1458,32 @@ export class Game3DRenderer {
   // --- SPRITE 2.5D PBR & CUSTOM SPECULAR SHADER FACTORY ---
   public create2DSpriteMaterial(textures: SpriteMaterialTextures): THREE.MeshStandardMaterial {
     return this.pbrGenerator.create2DSpriteMaterial(textures);
+  }
+
+  /** Creates a THREE.SpriteMaterial with map and normalMap (no MeshStandardMaterial PBR maps). */
+  public createSpriteMaterial(textures: SpriteMaterialTextures): THREE.SpriteMaterial {
+    const isPixelMode = this.pixelPerfectEnabled;
+    const mat = new THREE.SpriteMaterial({
+      map: textures.texture,
+      alphaTest: isPixelMode ? 0.5 : 0.05,
+      transparent: true,
+      depthWrite: true,
+      side: THREE.FrontSide,
+    });
+    const m = mat as any;
+    m.normalMap = this.spriteNormalEnabled ? textures.normalTexture : null;
+    m.normalScale = new THREE.Vector2(this.spriteNormalStrength, this.spriteNormalStrength);
+    return mat;
+  }
+
+  /** Updates a SpriteMaterial's maps and normal settings. */
+  public updateSpriteMaterial(mat: THREE.SpriteMaterial, textures: SpriteMaterialTextures): void {
+    const m = mat as any;
+    mat.map = textures.texture;
+    m.normalMap = this.spriteNormalEnabled ? textures.normalTexture : null;
+    m.normalScale.set(this.spriteNormalStrength, this.spriteNormalStrength);
+    mat.alphaTest = this.pixelPerfectEnabled ? 0.5 : 0.05;
+    mat.needsUpdate = true;
   }
 
   public update2DSpriteMaterial(mat: THREE.MeshStandardMaterial, textures: SpriteMaterialTextures): void {
@@ -1514,7 +1652,7 @@ export class Game3DRenderer {
       isStealthed: player.isStealthed,
       facing: player.facing,
       spriteUrl: playerUrl,
-      overlaySpriteUrls: playerHeadUrl ? [playerHeadUrl] : [],
+      headUrl: playerHeadUrl,
     };
 
     if (
@@ -1523,7 +1661,7 @@ export class Game3DRenderer {
       this.playerRenderParams.isStealthed !== newPlayerParams.isStealthed ||
       this.playerRenderParams.name !== newPlayerParams.name ||
       this.playerRenderParams.spriteUrl !== newPlayerParams.spriteUrl ||
-      this.playerRenderParams.overlaySpriteUrls.join('|') !== newPlayerParams.overlaySpriteUrls.join('|')
+      this.playerRenderParams.headUrl !== newPlayerParams.headUrl
     ) {
       this.playerNeedsTextureRefresh = true;
     }
@@ -2394,48 +2532,63 @@ export class Game3DRenderer {
         }
 
         if (this.playerRenderParams) {
-          if (!this.playerMesh) {
-            const spriteTextures = this.getOrCreateSpriteTextures(
-              this.playerRenderParams.icon,
-              this.playerRenderParams.glowColor,
-              this.playerRenderParams.name,
-              this.playerRenderParams.isStealthed,
-              this.playerRenderParams.spriteUrl,
-              this.playerRenderParams.facing,
-              pAnimFrame,
-              this.playerRenderParams.overlaySpriteUrls
-            );
-            const mat = this.create2DSpriteMaterial(spriteTextures);
+          const bodyUrl = this.playerRenderParams.spriteUrl;
+          const headUrl = this.playerRenderParams.headUrl;
+          const facing = this.playerRenderParams.facing;
 
-            this.playerMesh = new THREE.Mesh(this.sharedBillboardGeometry, mat);
-            this.playerMesh.frustumCulled = false;
-            this.entityGroup.add(this.playerMesh);
+          if (!this.playerGroup) {
+            // Load both spritesheet textures
+            const bodyTexInfo = this.getOrCreateSpriteSheetTextures(bodyUrl);
+            const headTexInfo = this.getOrCreateSpriteSheetTextures(headUrl);
+            if (!bodyTexInfo || !headTexInfo) return;
+
+            const bodyMat = this.createSpriteMaterial(bodyTexInfo);
+            const headMat = this.createSpriteMaterial(headTexInfo);
+
+            const pScale = this.getPixelPerfectSpriteScale(false);
+
+            // Body Sprite: pivot bottom-center → bottom at Group origin
+            const bodySprite = new THREE.Sprite(bodyMat);
+            bodySprite.scale.set(pScale, pScale, 1);
+            bodySprite.position.set(0, 0, 0);
+
+            // Head Sprite: pivot neck (0.75 height), positioned at 0.65 * bodyHeight
+            const headSprite = new THREE.Sprite(headMat);
+            headSprite.scale.set(pScale, pScale, 1);
+            headSprite.position.set(0, pScale * 0.65, 0);
+
+            this.playerGroup = new THREE.Group();
+            this.playerGroup.add(bodySprite);
+            this.playerGroup.add(headSprite);
+            this.playerGroup.frustumCulled = false;
+            this.entityGroup.add(this.playerGroup);
+            this.playerGroup.scale.set(pScale, pScale, 1);
             this.playerLastAnimFrame = pAnimFrame;
           } else if (pAnimFrame !== this.playerLastAnimFrame || this.playerNeedsTextureRefresh) {
             this.playerLastAnimFrame = pAnimFrame;
             this.playerNeedsTextureRefresh = false;
 
-            const spriteTextures = this.getOrCreateSpriteTextures(
-              this.playerRenderParams.icon,
-              this.playerRenderParams.glowColor,
-              this.playerRenderParams.name,
-              this.playerRenderParams.isStealthed,
-              this.playerRenderParams.spriteUrl,
-              this.playerRenderParams.facing,
-              pAnimFrame,
-              this.playerRenderParams.overlaySpriteUrls
-            );
-            this.update2DSpriteMaterial(this.playerMesh.material, spriteTextures);
+            // Update texture offsets for both body and head sprites
+            const bodySprite = this.playerGroup.children[0] as THREE.Sprite | undefined;
+            const headSprite = this.playerGroup.children[1] as THREE.Sprite | undefined;
+            if (bodySprite?.material?.map) {
+              this.setSpriteSheetOffset(bodySprite.material.map as THREE.Texture, pAnimFrame, facing);
+              bodySprite.material.map.needsUpdate = true;
+            }
+            if (headSprite?.material?.map) {
+              this.setSpriteSheetOffset(headSprite.material.map as THREE.Texture, pAnimFrame, facing);
+              headSprite.material.map.needsUpdate = true;
+            }
           }
 
           const renderPx = this.snapVal(px);
           const renderPy = this.snapVal(py);
 
-          // Always update scale dynamically to keep screen-pixel density consistent
+          // Update Group position and scale
           const pScale = this.getPixelPerfectSpriteScale(false);
-          this.playerMesh.scale.set(pScale, pScale, 1);
-          this.playerMesh.position.set(renderPx, 0, renderPy);
-          this.playerMesh.quaternion.copy(this.camera.quaternion);
+          this.playerGroup.scale.set(pScale, pScale, 1);
+          this.playerGroup.position.set(renderPx, 0, renderPy);
+          this.playerGroup.quaternion.copy(this.camera.quaternion);
 
           if (this.playerLight) {
             this.playerLight.position.set(renderPx, 1.5, renderPy);
