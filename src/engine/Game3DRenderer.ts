@@ -1335,8 +1335,9 @@ export class Game3DRenderer {
     const img = this.getOrLoadImage(spriteUrl);
     if (!img) return null;
 
-    // Create main texture with 4×4 repeat
+    // Create main texture with 4×4 repeat, flipY=false since spritesheet row 0 is at top of image
     const tex = new THREE.Texture(img);
+    tex.flipY = false;
     tex.repeat.set(0.25, 0.25);
     tex.offset.set(0, 0);
     tex.wrapS = THREE.ClampToEdgeWrapping;
@@ -1365,6 +1366,7 @@ export class Game3DRenderer {
     ];
     for (const [k, t] of pbrEntries) {
       if (!t) continue;
+      t.flipY = false;
       t.repeat.set(0.25, 0.25);
       t.offset.set(0, 0);
       t.wrapS = THREE.ClampToEdgeWrapping;
@@ -1392,14 +1394,12 @@ export class Game3DRenderer {
     if (!texture) return;
     const col = animFrame % 4;
     let row = 0;
-    // Spritesheet layout: row 0=top(up/north), row 1=left, row 2=right, row 3=bottom(down/south)
-    // Texture UV: offset.y=0 is bottom, so invert with (3-row)*0.25
+    // Spritesheet layout with flipY=false: row 0=down/south, 1=left, 2=right, 3=up/north
     if (facing === 'down') row = 0;
     else if (facing === 'left') row = 1;
     else if (facing === 'right') row = 2;
     else if (facing === 'up') row = 3;
-    const offsetY = (3 - row) * 0.25;
-    texture.offset.set(col * 0.25, offsetY);
+    texture.offset.set(col * 0.25, row * 0.25);
   }
 
   public getOrCreateSpriteTextures(
@@ -2551,15 +2551,14 @@ export class Game3DRenderer {
 
             const pScale = this.getPixelPerfectSpriteScale(false);
 
-            // Body Sprite: pivot bottom-center → bottom at Group origin (local y=0)
+            // Body Sprite: pivot bottom-center (JSON pivot y=1.0) → bottom at y=0 in local coords
             const bodySprite = new THREE.Sprite(bodyMat);
-            bodySprite.position.set(0, 0, 0);
+            bodySprite.position.set(0, 0.5, 0);
 
-            // Head Sprite: smaller than body (head cell ~193px vs body ~263px)
-            // Position at body neck (local y ≈ 0.70). Sprite centered, extends ±0.5 * 0.73
+            // Head Sprite: smaller (head cell ~193px vs body ~263px ≈ 73%), pivot at neck
             const headSprite = new THREE.Sprite(headMat);
             headSprite.scale.set(0.73, 0.73, 1);
-            headSprite.position.set(0, 0.70, 0);
+            headSprite.position.set(0, 0.5175, 0);
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(bodySprite);
