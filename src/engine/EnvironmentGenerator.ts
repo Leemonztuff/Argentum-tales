@@ -6,6 +6,8 @@ import { ProceduralBuildingGenerator, BuildingFootprint } from './ProceduralBuil
 import { PropFamilyGenerator, PropFamily } from './PropFamilyGenerator';
 import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
 import { NEW_TEXTURE_SHEETS, type CainosSheet, type SpriteCell } from '../data/newTextureManifest';
+import { VegetationAtlas } from './VegetationAtlas';
+import { VegetationBillboardSystem } from './VegetationBillboardSystem';
 
 // Procedural helpers
 function seededRandom(seed: number) {
@@ -495,7 +497,19 @@ function createStoneFloorMaterial(): THREE.MeshToonMaterial {
 
 
 
-function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, theme: string): THREE.Texture {
+// Ground texture cache for the new tileable textures
+const groundTextureCache = new Map<string, HTMLImageElement>();
+function getGroundTextureImage(url: string): HTMLImageElement {
+  let img = groundTextureCache.get(url);
+  if (!img) {
+    img = new Image();
+    img.src = url;
+    groundTextureCache.set(url, img);
+  }
+  return img;
+}
+
+function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, theme: string, biome?: typeof BIOMES[string]): THREE.Texture {
   // 184px cell = atlas.jpg cell size (736x368 / 4x2), keeping generated
   // ground tiles at the exact same native density as static stone/wood
   // planes (world-art §5 pixel-density coherence). 1:1 draw, no resample.
@@ -529,73 +543,83 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
   texture.wrapT = THREE.RepeatWrapping;
   texture.needsUpdate = true;
 
-  // 2. Reuse the shared Cainos ground tiles (full-bleed 256x256) for the base
-  const drawFromTiles = () => {
-    if (!sharedGrassTileImage || !sharedStoneTileImage) return;
-    if (!sharedGrassTileImage.complete || sharedGrassTileImage.naturalWidth === 0) return;
-    if (!sharedStoneTileImage.complete || sharedStoneTileImage.naturalWidth === 0) return;
+  // 2. Try loading the new tileable ground textures first, fall back to Cainos tiles
+  const newGroundUrl = isPath ? biome?.pathTexture : biome?.groundTexture;
+  const newGroundImg = newGroundUrl ? getGroundTextureImage(newGroundUrl) : null;
+  const useNewGround = newGroundImg && newGroundImg.complete && newGroundImg.naturalWidth > 0;
 
+  const drawFromTiles = () => {
     // Clear the solid fallback
     ctx.clearRect(0, 0, size, size);
 
-    // 3. Cainos GRASS sub-tile (128x128 seam-free) as the base ground
-    ctx.drawImage(sharedGrassTileImage, 0, 0, 128, 128, 0, 0, size, size);
+    if (useNewGround && newGroundImg) {
+      // Draw the new tileable ground texture (1024x1024) scaled to canvas size
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(newGroundImg, 0, 0, newGroundImg.naturalWidth, newGroundImg.naturalHeight, 0, 0, size, size);
+    } else if (sharedGrassTileImage && sharedStoneTileImage
+      && sharedGrassTileImage.complete && sharedGrassTileImage.naturalWidth > 0
+      && sharedStoneTileImage.complete && sharedStoneTileImage.naturalWidth > 0) {
+      // Fallback: Cainos GRASS sub-tile (128x128) as base ground
+      ctx.drawImage(sharedGrassTileImage, 0, 0, 128, 128, 0, 0, size, size);
 
-    // 4. Cainos STONE GROUND sub-tile (128x128) as the path layer with a feathered alpha mask
-    if (isPath) {
-      // Create offscreen canvas for the path texture
-      const pathCanvas = document.createElement('canvas');
-      pathCanvas.width = size;
-      pathCanvas.height = size;
-      const pCtx = pathCanvas.getContext('2d')!;
+      // Cainos STONE GROUND sub-tile for paths with feathered alpha mask
+      if (isPath) {
+        const pathCanvas = document.createElement('canvas');
+        pathCanvas.width = size;
+        pathCanvas.height = size;
+        const pCtx = pathCanvas.getContext('2d')!;
+        pCtx.drawImage(sharedStoneTileImage, 0, 0, 128, 128, 0, 0, size, size);
 
-      // Draw the raw stone tile
-      pCtx.drawImage(sharedStoneTileImage, 0, 0, 128, 128, 0, 0, size, size);
+        let tintR = 124, tintG = 90, tintB = 60, tintAlpha = 0.0;
+        if (theme === 'coast') { tintR = 210; tintG = 185; tintB = 140; tintAlpha = 0.35; }
+        else if (theme === 'crypt') { tintR = 60; tintG = 70; tintB = 90; tintAlpha = 0.45; }
+        else if (theme === 'fire_temple') { tintR = 130; tintG = 35; tintB = 20; tintAlpha = 0.5; }
+        else if (theme === 'ruins') { tintR = 100; tintG = 105; tintB = 120; tintAlpha = 0.3; }
+        else if (theme === 'plains') { tintR = 124; tintG = 90; tintB = 60; tintAlpha = 0.2; }
 
-      // Apply dynamic atmospheric tinting over the path stones to integrate with biome colors
-      let tintR = 124, tintG = 90, tintB = 60, tintAlpha = 0.0;
-      if (theme === 'coast') {
-        tintR = 210; tintG = 185; tintB = 140; tintAlpha = 0.35; // Warm sand
-      } else if (theme === 'crypt') {
-        tintR = 60; tintG = 70; tintB = 90; tintAlpha = 0.45; // Eerie slate
-      } else if (theme === 'fire_temple') {
-        tintR = 130; tintG = 35; tintB = 20; tintAlpha = 0.5; // Volcanic red
-      } else if (theme === 'ruins') {
-        tintR = 100; tintG = 105; tintB = 120; tintAlpha = 0.3; // Dusty grey ruins
-      } else if (theme === 'plains') {
-        tintR = 124; tintG = 90; tintB = 60; tintAlpha = 0.2; // Muddy brown path
-      }
+        if (tintAlpha > 0) {
+          pCtx.save();
+          pCtx.fillStyle = `rgba(${tintR}, ${tintG}, ${tintB}, ${tintAlpha})`;
+          pCtx.globalCompositeOperation = 'source-atop';
+          pCtx.fillRect(0, 0, size, size);
+          pCtx.restore();
+        }
 
-      if (tintAlpha > 0) {
         pCtx.save();
-        pCtx.fillStyle = `rgba(${tintR}, ${tintG}, ${tintB}, ${tintAlpha})`;
-        pCtx.globalCompositeOperation = 'source-atop';
+        pCtx.globalCompositeOperation = 'destination-in';
+        const maskGrad = pCtx.createRadialGradient(size / 2, size / 2, size * 0.15, size / 2, size / 2, size * 0.49);
+        maskGrad.addColorStop(0.0, 'rgba(0,0,0,1.0)');
+        maskGrad.addColorStop(0.35, 'rgba(0,0,0,0.85)');
+        maskGrad.addColorStop(0.65, 'rgba(0,0,0,0.35)');
+        maskGrad.addColorStop(1.0, 'rgba(0,0,0,0.0)');
+        pCtx.fillStyle = maskGrad;
         pCtx.fillRect(0, 0, size, size);
         pCtx.restore();
+
+        ctx.drawImage(pathCanvas, 0, 0);
       }
-
-      // Use destination-in composite mode to smoothly feather the path edges (melting grass & dirt together)
-      pCtx.save();
-      pCtx.globalCompositeOperation = 'destination-in';
-      const maskGrad = pCtx.createRadialGradient(size / 2, size / 2, size * 0.15, size / 2, size / 2, size * 0.49);
-      maskGrad.addColorStop(0.0, 'rgba(0,0,0,1.0)');
-      maskGrad.addColorStop(0.35, 'rgba(0,0,0,0.85)');
-      maskGrad.addColorStop(0.65, 'rgba(0,0,0,0.35)');
-      maskGrad.addColorStop(1.0, 'rgba(0,0,0,0.0)');
-
-      pCtx.fillStyle = maskGrad;
-      pCtx.fillRect(0, 0, size, size);
-      pCtx.restore();
-
-      // Render the feathered path directly onto our grass base
-      ctx.drawImage(pathCanvas, 0, 0);
     }
 
-    // Notify Three.js that the texture has updated with high-fidelity atlas pixels
     texture.needsUpdate = true;
   };
 
-  if (sharedGrassTileImage && sharedStoneTileImage) {
+  if (useNewGround) {
+    // New ground texture already loaded, draw immediately
+    drawFromTiles();
+  } else if (newGroundImg && newGroundUrl) {
+    // New ground texture still loading, wait for it
+    newGroundImg.addEventListener('load', drawFromTiles, { once: true });
+    // Also try Cainos tiles as intermediate fallback
+    if (sharedGrassTileImage && sharedStoneTileImage) {
+      const readyNow = sharedGrassTileImage.complete && sharedGrassTileImage.naturalWidth > 0
+        && sharedStoneTileImage.complete && sharedStoneTileImage.naturalWidth > 0;
+      if (readyNow) drawFromTiles();
+      else {
+        sharedGrassTileImage.addEventListener('load', drawFromTiles, { once: true });
+        sharedStoneTileImage.addEventListener('load', drawFromTiles, { once: true });
+      }
+    }
+  } else if (sharedGrassTileImage && sharedStoneTileImage) {
     const readyNow = sharedGrassTileImage.complete && sharedGrassTileImage.naturalWidth > 0
       && sharedStoneTileImage.complete && sharedStoneTileImage.naturalWidth > 0;
     if (readyNow) {
@@ -656,28 +680,26 @@ export class EnvironmentGenerator {
     this.foamMaterial.opacity = 0.45 + 0.12 * Math.sin((this.fluidUniforms[0]?.value ?? 0) * 1.1);
   }
 
-  // Billboards: camera-facing props/plants (world-art §7). Re-orients every
-  // instance toward the current camera quaternion each frame (mob pattern).
+  // Vegetation billboard system — single draw call for all foliage
+  private vegAtlas = new VegetationAtlas();
+  private vegSystem: VegetationBillboardSystem | null = null;
+
   public updateBillboardOrientations(cameraQuaternion: THREE.Quaternion): void {
-    for (const batch of this.billboardBatches) {
-      const list = batch.instances;
-      for (let i = 0; i < list.length; i++) {
-        const it = list[i];
-        this.billboardDummy.position.set(it.x, ENV_AESTHETICS.terrain.groundHeight + 0.015, it.z);
-        this.billboardDummy.scale.set(it.scale, it.scale, 1);
-        this.billboardDummy.quaternion.copy(cameraQuaternion);
-        this.billboardDummy.updateMatrix();
-        batch.mesh.setMatrixAt(i, this.billboardDummy.matrix);
-      }
-      if (list.length > 0) batch.mesh.instanceMatrix.needsUpdate = true;
-    }
+    this.vegSystem?.updateOrientations(cameraQuaternion);
   }
 
-  // Spawns a decor family as camera-facing billboards sliced from the Cainos
-  // sheets (TX Plant / TX Props), replacing the old 3D tree/bush/grass/pebble.
+  public getVegMaterial(): THREE.ShaderMaterial | null {
+    return this.vegSystem?.getMaterial() ?? null;
+  }
+
+  /**
+   * Spawns a decor family into the unified vegetation billboard system.
+   * All types share one atlas texture + one material = one draw call.
+   */
   private spawnBillboardDecor(type: string, placements: DecorPlacement[]) {
     const cfg = DECOR_BILLBOARD_MAP[type];
     if (!cfg) return;
+    if (!this.vegSystem) return;
     const sheet = NEW_TEXTURE_SHEETS[cfg.sheet as keyof typeof NEW_TEXTURE_SHEETS];
     if (!sheet) return;
     const filtered = placements.filter(p => p.type === type);
@@ -686,32 +708,17 @@ export class EnvironmentGenerator {
     const variance = ENV_AESTHETICS.objectVariances[type] || { scaleMin: 0.9, scaleMax: 1.1, scatterRadius: 0, wobbleRotation: 0 };
 
     for (let ci = 0; ci < cfg.cells.length; ci++) {
-      const cell = sheet.cells.find(c => c.id === cfg.cells[ci]);
+      const cellId = cfg.cells[ci];
+      const cell = sheet.cells.find(c => c.id === cellId);
       if (!cell) continue;
       const variantPlacements = filtered.filter(p => p.variant % cfg.cells.length === ci);
       if (variantPlacements.length === 0) continue;
-
-      const material = new THREE.MeshToonMaterial({
-        map: createBillboardTexture(sheet, cell),
-        gradientMap: toonGradient,
-        transparent: true,
-        alphaTest: 0.5,
-        side: THREE.FrontSide,
-        depthWrite: true,
-      });
-      const mesh = new THREE.InstancedMesh(this.billboardGeometry, material, variantPlacements.length);
-      mesh.castShadow = !!cfg.castShadow;
-      mesh.receiveShadow = false;
-      mesh.frustumCulled = false;
-      this.group!.add(mesh);
-      this.instances.push(mesh);
 
       const dims = spriteSliceDims(cell.bbox);
       const worldScale = cfg.height
         ? (cfg.height * 256) / dims.destH
         : ((cfg.width ?? 1) * 256) / dims.destW;
 
-      const instances: { x: number; z: number; scale: number }[] = [];
       variantPlacements.forEach(p => {
         const scale = worldScale * randomRange(variance.scaleMin, variance.scaleMax, p.seed);
         let x = p.x;
@@ -720,19 +727,10 @@ export class EnvironmentGenerator {
           x += randomRange(-variance.scatterRadius, variance.scatterRadius, p.seed + 3);
           z += randomRange(-variance.scatterRadius, variance.scatterRadius, p.seed + 4);
         }
-        instances.push({ x, z, scale });
+        this.vegSystem!.addInstance(x, z, cellId, scale);
       });
-      this.billboardBatches.push({ mesh, instances });
     }
   }
-
-  private billboardBatches: { mesh: THREE.InstancedMesh; instances: { x: number; z: number; scale: number }[] }[] = [];
-  private billboardDummy = new THREE.Object3D();
-  private billboardGeometry = (() => {
-    const geometry = new THREE.PlaneGeometry(1, 1);
-    geometry.translate(0, 0.5 - 14 / 256, 0);
-    return geometry;
-  })();
 
   private rockFamily = buildRockFamily();
   private wallFamily = buildWallFamily();
@@ -759,7 +757,12 @@ export class EnvironmentGenerator {
       }
     });
     this.instances = [];
-    this.billboardBatches = [];
+    if (this.vegSystem) {
+      const mesh = this.vegSystem.getMesh();
+      if (mesh && this.group) this.group.remove(mesh);
+      this.vegSystem.dispose();
+      this.vegSystem = null;
+    }
   }
 
   public buildMap(map: GameMap, parentGroup: THREE.Group) {
@@ -769,8 +772,8 @@ export class EnvironmentGenerator {
     const biome = BIOMES[map.theme] || BIOMES['plains'];
 
     // Dynamically generate procedural canvas textures for ground and blended route
-    const grassTex = generateBlendedTileTexture(biome.groundColor, false, map.theme);
-    const pathTex = generateBlendedTileTexture(biome.groundColor, true, map.theme);
+    const grassTex = generateBlendedTileTexture(biome.groundColor, false, map.theme, biome);
+    const pathTex = generateBlendedTileTexture(biome.groundColor, true, map.theme, biome);
 
     const grassMat = new THREE.MeshToonMaterial({
       map: grassTex,
@@ -1062,12 +1065,22 @@ export class EnvironmentGenerator {
 
     // Spawn Families
     spawnFamily('wall', this.wallFamily, [this.materials.wall, this.materials.wallStoneDark, this.materials.wallStoneRound]);
+
+    // Initialize vegetation billboard system (single draw call for all foliage)
+    this.vegAtlas.loadSync();
+    this.vegSystem = new VegetationBillboardSystem(this.vegAtlas);
+
     this.spawnBillboardDecor('tree', placements);
     spawnFamily('ore', this.rockFamily, this.materials.ore);
     this.spawnBillboardDecor('grassTuft', placements);
     this.spawnBillboardDecor('bush', placements);
     this.spawnBillboardDecor('pebble', placements);
-    spawnFamily('mushroom', this.mushroomFamily, this.materials.mushroomStem, this.materials.mushroomCap);
+    // Mushrooms (billboard via unified vegetation atlas)
+    placements.filter(p => p.type === 'mushroom').forEach(p => {
+      const variance = ENV_AESTHETICS.objectVariances.mushroom;
+      const scale = 0.35 * randomRange(variance.scaleMin, variance.scaleMax, p.seed);
+      this.vegSystem!.addInstance(p.x, p.y, 'plant_1', scale);
+    });
 
     // Handle generic single-variant tiles/items
     const dummy = new THREE.Object3D();
@@ -1151,10 +1164,20 @@ export class EnvironmentGenerator {
       this.instances.push(foamMesh);
     }
 
-    // Herbs (Single variant cone)
-    const herbGeo = new THREE.ConeGeometry(0.3, 0.6, 4);
-    herbGeo.translate(0, 0.3, 0);
-    spawnSingle('herb', herbGeo, this.materials.herb, 0, false, 'herb');
+    // Herbs (billboard via unified vegetation atlas)
+    placements.filter(p => p.type === 'herb').forEach(p => {
+      const variance = ENV_AESTHETICS.objectVariances.herb;
+      const scale = 0.4 * randomRange(variance.scaleMin, variance.scaleMax, p.seed);
+      this.vegSystem!.addInstance(p.x, p.y, 'plant_0', scale);
+    });
+
+    // Build the unified vegetation mesh (single draw call) and add to scene
+    this.vegSystem!.build();
+    const vegMesh = this.vegSystem!.getMesh();
+    if (vegMesh) {
+      this.group!.add(vegMesh);
+      this.instances.push(vegMesh);
+    }
 
     // Civilized props (instanced, sparse)
     spawnProps('crate');

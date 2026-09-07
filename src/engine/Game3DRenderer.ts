@@ -1040,6 +1040,14 @@ export class Game3DRenderer {
 
     this.envGen.buildMap(map, this.tileGroup);
 
+    // Sync fog uniforms with vegetation billboard shader
+    const fog = this.scene.fog;
+    const vegMat = this.envGen.getVegMaterial();
+    if (fog && vegMat && fog instanceof THREE.FogExp2) {
+      vegMat.uniforms.fogColor.value.copy(fog.color);
+      vegMat.uniforms.fogDensity.value = fog.density;
+    }
+
     // Build NPCs with pixel-perfect scaling, crisp alpha-test, normal maps, and billboard rendering
     this.npcSprites.clear();
     map.npcs.forEach((npc) => {
@@ -1336,8 +1344,8 @@ export class Game3DRenderer {
     if (!img) return null;
 
     // Create main texture with 4×4 repeat
-    // flipY=true (Three.js default): spritesheet row 0 at top of image maps to bottom of texture UV
-    // This matches renderSpriteCanvas layout: down=row0(top), left=row1, right=row2, up=row3(bottom)
+    // flipY=true (Three.js default): flips image so PNG row 0 (top) → texture V=1 (top)
+    // With offset: row 0=down/south(top) at offset.y=0.75, row 3=up/north(bottom) at offset.y=0
     const tex = new THREE.Texture(img);
     tex.repeat.set(0.25, 0.25);
     tex.offset.set(0, 0);
@@ -1383,7 +1391,8 @@ export class Game3DRenderer {
 
   /**
    * Updates texture.offset for a 4×4 spritesheet based on frame index and facing direction.
-   * Row mapping: 0=down/south, 1=left, 2=right, 3=up/north.
+   * Row mapping (PNG): 0=down/south(top), 1=left, 2=right, 3=up/north(bottom).
+   * With flipY=true, row 0 (top of PNG) → offset.y=0.75, row 3 (bottom) → offset.y=0.
    * Both body and head use the same frameIndex and row.
    */
   private setSpriteSheetOffset(
@@ -1394,14 +1403,15 @@ export class Game3DRenderer {
     if (!texture) return;
     const col = animFrame % 4;
     let row = 0;
-    // Spritesheet layout with flipY=true: row 0=down/south(top), 1=left, 2=right, 3=up/bottom
     // Left-facing frames are horizontally mirrored → reverse offset.x
     const colX = facing === 'left' ? (3 - col) : col;
     if (facing === 'down') row = 0;
     else if (facing === 'left') row = 1;
     else if (facing === 'right') row = 2;
     else if (facing === 'up') row = 3;
-    texture.offset.set(colX * 0.25, row * 0.25);
+    // flipY=true inverts V: row 0 (PNG top) maps to offset.y=0.75, row 3 to offset.y=0
+    const adjustedRow = 3 - row;
+    texture.offset.set(colX * 0.25, adjustedRow * 0.25);
   }
 
   public getOrCreateSpriteTextures(
@@ -2556,7 +2566,8 @@ export class Game3DRenderer {
             // Sprite cells: body=264x264, head=128x128. Head is 128/264 of body height.
             // Both pivots are bottom-center (JSON pivot y=1.0).
             // Body shows full character (feet to head). Head overlay replaces the head area.
-            const HEAD_BODY_RATIO = 128 / 264;
+            // Head scaled 20% bigger than pixel-perfect ratio for visual balance.
+            const HEAD_BODY_RATIO = (128 / 264) * 1.2;
 
             // Body Sprite: pivot bottom-center → bottom at y=0 in local coords
             const bodySprite = new THREE.Sprite(bodyMat);
