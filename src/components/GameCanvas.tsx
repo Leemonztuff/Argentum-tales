@@ -418,25 +418,22 @@ const GameCanvasBase: React.FC<GameCanvasProps> = ({
         </div>
       )}
 
-      {/* Floating combat numbers */}
+      {/* Floating combat numbers — GPU-accelerated CSS keyframes */}
       <div className="absolute inset-0 pointer-events-none z-10">
         {floatingTexts.map((ft) => {
-          // Floating damage visual offset
-          const elapsed = Date.now() - ft.created;
-          const progress = Math.min(1, elapsed / ft.durationMs);
-          const offsetY = progress * -40;
-          const opacity = 1 - progress;
+          const animClass = ft.kind === 'crit' ? 'crit-float'
+            : ft.kind === 'heal' ? 'heal-float'
+            : ft.kind === 'miss' ? 'miss-float'
+            : 'dmg-float';
 
           return (
             <div
               key={ft.id}
-              className="absolute font-pixel font-bold text-lg sm:text-2xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] transition-transform duration-75"
+              className={`absolute font-pixel font-bold text-lg sm:text-2xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] ${animClass}`}
               style={{
                 left: `${50 + (ft.x - player.x) * 4.5}%`,
                 top: `${45 + (ft.y - player.y) * 4.5}%`,
-                transform: `translate(-50%, calc(-50% + ${offsetY}px)) scale(${1 + (1 - progress) * 0.3})`,
                 color: ft.color,
-                opacity,
               }}
             >
               {ft.text}

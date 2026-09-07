@@ -722,88 +722,64 @@ export class Game3DRenderer {
     this.groundReticleGroup = new THREE.Group();
     this.groundReticleGroup.visible = false;
 
-    // 1. Outer Rotating Ring — reduced opacity for clean visual blending under sprites
-    const outerGeo = new THREE.RingGeometry(0.55, 0.65, 32);
-    const outerMat = new THREE.MeshBasicMaterial({
+    // Minimalist reticle: thin concentric rings + cardinal cross + center dot
+    const ringMat = (opacity: number) => new THREE.MeshBasicMaterial({
       color: 0x22c55e,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.45,
+      opacity,
       depthWrite: false,
     });
-    this.reticleOuterRing = new THREE.Mesh(outerGeo, outerMat);
+
+    // 1. Outer Ring — razor-thin annulus
+    const outerGeo = new THREE.RingGeometry(0.58, 0.60, 48);
+    this.reticleOuterRing = new THREE.Mesh(outerGeo, ringMat(0.55));
     this.reticleOuterRing.rotation.x = -Math.PI / 2;
     this.reticleOuterRing.position.y = 0.03;
     this.groundReticleGroup.add(this.reticleOuterRing);
 
-    // 2. Inner Rotating Ring — reduced opacity for clean visual blending
-    const innerGeo = new THREE.RingGeometry(0.35, 0.42, 32);
-    const innerMat = new THREE.MeshBasicMaterial({
-      color: 0x22c55e,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.35,
-      depthWrite: false,
-    });
-    this.reticleInnerRing = new THREE.Mesh(innerGeo, innerMat);
+    // 2. Inner Ring — razor-thin annulus
+    const innerGeo = new THREE.RingGeometry(0.38, 0.40, 48);
+    this.reticleInnerRing = new THREE.Mesh(innerGeo, ringMat(0.40));
     this.reticleInnerRing.rotation.x = -Math.PI / 2;
     this.reticleInnerRing.position.y = 0.035;
     this.groundReticleGroup.add(this.reticleInnerRing);
 
-    // 3. Inner Pulsing Core Disc — reduced opacity and disabled depthWrite
-    const pulseGeo = new THREE.CircleGeometry(0.48, 32);
-    const pulseMat = new THREE.MeshBasicMaterial({
-      color: 0x22c55e,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.12,
-      depthWrite: false,
-    });
-    this.reticleInnerPulse = new THREE.Mesh(pulseGeo, pulseMat);
+    // 3. Pulse ring — expands on combat events (starts hidden scale)
+    const pulseGeo = new THREE.RingGeometry(0.44, 0.46, 48);
+    this.reticleInnerPulse = new THREE.Mesh(pulseGeo, ringMat(0.0));
     this.reticleInnerPulse.rotation.x = -Math.PI / 2;
     this.reticleInnerPulse.position.y = 0.025;
     this.groundReticleGroup.add(this.reticleInnerPulse);
 
-    // 4. Cardinal Crosshair Ticks — reduced opacity and disabled depthWrite
+    // 4. Cardinal Cross — 4 thin lines extending from center
     this.reticleBrackets = new THREE.Group();
-    const tickGeo = new THREE.PlaneGeometry(0.08, 0.24);
-    const tickMat = new THREE.MeshBasicMaterial({
-      color: 0x22c55e,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-    });
+    const crossMat = ringMat(0.65);
+    const lineGeo = new THREE.PlaneGeometry(0.025, 0.32);
+    const lineOffset = 0.52;
 
-    // North
-    const tickN = new THREE.Mesh(tickGeo, tickMat);
-    tickN.rotation.x = -Math.PI / 2;
-    tickN.position.set(0, 0.04, -0.72);
-    this.reticleBrackets.add(tickN);
-
-    // South
-    const tickS = new THREE.Mesh(tickGeo, tickMat);
-    tickS.rotation.x = -Math.PI / 2;
-    tickS.position.set(0, 0.04, 0.72);
-    this.reticleBrackets.add(tickS);
-
-    // East
-    const tickE = new THREE.Mesh(tickGeo, tickMat);
-    tickE.rotation.x = -Math.PI / 2;
-    tickE.rotation.z = Math.PI / 2;
-    tickE.position.set(0.72, 0.04, 0);
-    this.reticleBrackets.add(tickE);
-
-    // West
-    const tickW = new THREE.Mesh(tickGeo, tickMat);
-    tickW.rotation.x = -Math.PI / 2;
-    tickW.rotation.z = Math.PI / 2;
-    tickW.position.set(-0.72, 0.04, 0);
-    this.reticleBrackets.add(tickW);
-
+    for (let i = 0; i < 4; i++) {
+      const line = new THREE.Mesh(lineGeo, crossMat);
+      line.rotation.x = -Math.PI / 2;
+      line.rotation.z = (i * Math.PI) / 2;
+      line.position.set(
+        Math.sin((i * Math.PI) / 2) * lineOffset,
+        0.04,
+        -Math.cos((i * Math.PI) / 2) * lineOffset,
+      );
+      this.reticleBrackets.add(line);
+    }
     this.groundReticleGroup.add(this.reticleBrackets);
 
-    // 5. Reticle Status Badge Sprite on Floor
+    // 5. Center Dot — tiny precise center (part of brackets group for color sync)
+    const dotGeo = new THREE.CircleGeometry(0.035, 16);
+    const dotMat = ringMat(0.75);
+    const centerDot = new THREE.Mesh(dotGeo, dotMat);
+    centerDot.rotation.x = -Math.PI / 2;
+    centerDot.position.y = 0.045;
+    this.reticleBrackets.add(centerDot);
+
+    // 6. Status Badge Sprite on Floor
     const statusMat = new THREE.SpriteMaterial({ transparent: true, opacity: 0.95 });
     this.reticleStatusSprite = new THREE.Sprite(statusMat);
     this.reticleStatusSprite.scale.set(1.6, 0.4, 1);
@@ -2205,6 +2181,19 @@ export class Game3DRenderer {
     this.cameraManager.triggerShake(intensity, durationMs);
   }
 
+  /**
+   * Triggers a dynamic pulse ring on the ground reticle.
+   * intensity: 0.0 = invisible, 1.0 = full bright expansion
+   */
+  public triggerReticlePulse(intensity: number = 0.8): void {
+    if (!this.reticleInnerPulse) return;
+    const mat = this.reticleInnerPulse.material as THREE.MeshBasicMaterial;
+    const color = this.currentReticleColor;
+    mat.color.setHex(color);
+    mat.opacity = Math.min(0.75, intensity);
+    this.reticleInnerPulse.scale.set(1, 1, 1);
+  }
+
   public triggerCriticalHitShake(
     isPlayerDealing = true,
     intensity = 0.68,
@@ -2739,19 +2728,22 @@ export class Game3DRenderer {
       // Re-orient world-art billboards (Cainos props/plants) toward the camera
       this.envGen.updateBillboardOrientations(camQuat);
 
-      // Ground Reticle Continuous Animation
+      // Ground Reticle Continuous Animation — slow, clean rotation
       if (this.groundReticleGroup && this.groundReticleGroup.visible) {
         if (this.reticleOuterRing) {
-          this.reticleOuterRing.rotation.z += 0.015;
+          this.reticleOuterRing.rotation.z += 0.008;
         }
         if (this.reticleInnerRing) {
-          this.reticleInnerRing.rotation.z -= 0.02;
+          this.reticleInnerRing.rotation.z -= 0.012;
         }
+        // Pulse ring: expands and fades on combat events
         if (this.reticleInnerPulse) {
-          const pulse = 0.92 + Math.sin(Date.now() * 0.007) * 0.12;
-          this.reticleInnerPulse.scale.set(pulse, pulse, pulse);
-          (this.reticleInnerPulse.material as THREE.MeshBasicMaterial).opacity =
-            (this.currentAlignmentStatus === 'in_range' ? 0.22 : 0.1) + Math.sin(Date.now() * 0.007) * 0.05;
+          const pulseMat = this.reticleInnerPulse.material as THREE.MeshBasicMaterial;
+          if (pulseMat.opacity > 0.001) {
+            const s = this.reticleInnerPulse.scale.x + 0.04;
+            this.reticleInnerPulse.scale.set(s, s, s);
+            pulseMat.opacity *= 0.92;
+          }
         }
       }
 

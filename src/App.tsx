@@ -388,7 +388,7 @@ export default function App() {
     const elapsed = now - lastDashTimestamp;
     if (elapsed < DASH_COOLDOWN_MS) {
       const remainingSec = ((DASH_COOLDOWN_MS - elapsed) / 1000).toFixed(1);
-      addFloatingText(`¡Dash en recarga (${remainingSec}s)!`, '#fbbf24', player.x, player.y, 600);
+      addFloatingText(`¡Dash en recarga (${remainingSec}s)!`, '#fbbf24', player.x, player.y, 600, 'miss');
       return;
     }
 
@@ -439,7 +439,7 @@ export default function App() {
     }
 
     if (tilesMoved === 0) {
-      addFloatingText('¡Camino bloqueado!', '#ef4444', player.x, player.y, 600);
+      addFloatingText('¡Camino bloqueado!', '#ef4444', player.x, player.y, 600, 'miss');
       return;
     }
 
@@ -583,7 +583,7 @@ export default function App() {
     const isPerfectAgite = remaining > 0 && remaining <= (attackIntervalMs * 0.20);
 
     if (now - player.lastAttackTimestamp < attackIntervalMs && !isPerfectAgite) {
-      addFloatingText('¡Cooldown!', '#fbbf24', player.x, player.y, 500);
+      addFloatingText('¡Cooldown!', '#fbbf24', player.x, player.y, 500, 'miss');
       return; // Anti-spam cooldown active
     }
 
@@ -710,7 +710,7 @@ export default function App() {
       const arrows = player.equipment.arrows;
       if (!arrows || (arrows.count || 0) <= 0) {
         addLog('¡No tienes flechas equipadas para disparar con el arco!', 'system');
-        addFloatingText('¡Sin Flechas!', '#ef4444', player.x, player.y);
+        addFloatingText('¡Sin Flechas!', '#ef4444', player.x, player.y, undefined, 'miss');
         return;
       }
       // Consume 1 arrow
@@ -770,14 +770,16 @@ export default function App() {
       if (result.isCriticalStab || result.isCritical) {
         sound.playStab();
         rendererRef.current?.triggerCriticalHitShake(true, 0.7, 420, target.x, target.y);
+        rendererRef.current?.triggerReticlePulse(1.0);
         triggerImpactEffect('deal');
         const critLabel = result.isCriticalStab
           ? `¡APUÑALADA CRÍTICA ${result.damage}! ⚡`
           : `¡GOLPE CRÍTICO ${result.damage}! ⚡`;
-        addFloatingText(critLabel, '#c084fc', target.x, target.y);
+        addFloatingText(critLabel, '#c084fc', target.x, target.y, undefined, 'crit');
         addLog(result.message, 'stab');
       } else {
         sound.playHitImpact();
+        rendererRef.current?.triggerReticlePulse(0.5);
         addFloatingText(`-${result.damage}`, '#ef4444', target.x, target.y);
         addLog(result.message, 'player_hit');
       }
@@ -792,7 +794,7 @@ export default function App() {
         );
       }
     } else {
-      addFloatingText('¡FALLO!', '#94a3b8', target.x, target.y);
+      addFloatingText('¡FALLO!', '#94a3b8', target.x, target.y, undefined, 'miss');
       addLog(result.message, 'player_miss');
       if (rendererRef.current) {
         rendererRef.current.triggerMissEffects(target.x, target.y);
@@ -823,13 +825,13 @@ export default function App() {
     const cooldownMs = (spell.cooldownSec || 1.0) * 1000;
     if (now - lastCast < cooldownMs) {
       addLog(`¡${spell.name} está recargándose!`, 'system');
-      addFloatingText(' Recargando', '#f59e0b', player.x, player.y);
+      addFloatingText(' Recargando', '#f59e0b', player.x, player.y, undefined, 'miss');
       return;
     }
 
     if (player.currentMp < spell.manaCost) {
       addLog('¡No tienes suficiente maná!', 'system');
-      addFloatingText('¡Sin Maná!', '#38bdf8', player.x, player.y);
+      addFloatingText('¡Sin Maná!', '#38bdf8', player.x, player.y, undefined, 'miss');
       return;
     }
 
@@ -845,7 +847,7 @@ export default function App() {
         return { ...prev, currentHp: Math.min(prev.maxHp, prev.currentHp + healAmount) };
       });
       addLog(`Canalizaste ${spell.name} y recuperaste ${healAmount} HP.`, 'spell');
-      addFloatingText(`+${healAmount} HP`, '#4ade80', player.x, player.y);
+      addFloatingText(`+${healAmount} HP`, '#4ade80', player.x, player.y, undefined, 'heal');
       return;
     }
 
@@ -896,10 +898,12 @@ export default function App() {
     if (isSpellCrit) {
       finalSpellDamage = Math.round(effectiveSpellDamage * 1.45);
       rendererRef.current?.triggerCriticalHitShake(true, 0.72, 450, target.x, target.y);
+      rendererRef.current?.triggerReticlePulse(1.0);
       triggerImpactEffect('deal');
-      addFloatingText(`✨ ¡CRÍTICO -${finalSpellDamage}! ✨`, spell.color, target.x, target.y);
+      addFloatingText(`✨ ¡CRÍTICO -${finalSpellDamage}! ✨`, spell.color, target.x, target.y, undefined, 'crit');
       addLog(`¡IMPACTO CRÍTICO MÁGICO! Tu ${spell.name} devastó a ${target.name} por ${finalSpellDamage} de daño mágico.`, 'spell');
     } else {
+      rendererRef.current?.triggerReticlePulse(0.4);
       addFloatingText(`✨ -${effectiveSpellDamage}`, spell.color, target.x, target.y);
       addLog(`Tu ${spell.name} impactó a ${target.name} por ${effectiveSpellDamage} de daño mágico.`, 'spell');
     }
@@ -1175,14 +1179,14 @@ export default function App() {
 
           if (result.blocked) {
             sound.playShieldBlock();
-            addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y);
+            addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y, undefined, 'miss');
             addLog(result.message, 'block');
           } else if (result.hit) {
             sound.playHitImpact();
             if (result.isCritical) {
               rendererRef.current?.triggerCriticalHitShake(false, 0.78, 480, p.x, p.y);
               triggerImpactEffect('receive');
-              addFloatingText(`¡CRÍTICO -${result.damage}! 💀`, '#f43f5e', p.x, p.y);
+              addFloatingText(`¡CRÍTICO -${result.damage}! 💀`, '#f43f5e', p.x, p.y, undefined, 'crit');
               addLog(result.message, 'mob_hit');
             } else {
               rendererRef.current?.triggerScreenShake(0.35, 250);
@@ -1201,7 +1205,7 @@ export default function App() {
               setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
             }
           } else {
-            addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y);
+            addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y, undefined, 'miss');
             addLog(result.message, 'player_miss');
           }
 
@@ -1323,10 +1327,10 @@ export default function App() {
     });
 
     if (type === 'hp') {
-      addFloatingText(`+${item.hpRestore || 45} HP`, '#22c55e', player.x, player.y);
+      addFloatingText(`+${item.hpRestore || 45} HP`, '#22c55e', player.x, player.y, undefined, 'heal');
       addLog('Bebiste una Poción Roja de Vida.', 'loot');
     } else {
-      addFloatingText(`+${item.mpRestore || 40} MP`, '#38bdf8', player.x, player.y);
+      addFloatingText(`+${item.mpRestore || 40} MP`, '#38bdf8', player.x, player.y, undefined, 'heal');
       addLog('Bebiste una Poción Azul de Maná.', 'loot');
     }
   };

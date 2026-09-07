@@ -54,13 +54,14 @@ export function useMapEntities({
     }, 4500);
   }, [setToasts]);
 
-  const addFloatingText = useCallback((text: string, color: string, x: number, y: number, durationMs = 800) => {
+  const addFloatingText = useCallback((text: string, color: string, x: number, y: number, durationMs = 800, kind?: FloatingText['kind']) => {
     const newText: FloatingText = {
       id: Math.random().toString(36).substring(2, 9),
       text,
       color,
       x,
       y,
+      kind,
       created: Date.now(),
       durationMs,
     };
