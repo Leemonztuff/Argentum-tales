@@ -70,6 +70,8 @@ export interface BiomeConfig {
   boundaryReplacement?: number; // Visual override for tile === 1 (e.g. 5 for Tree, 6 for Rock)
   propDensity?: number; // 0.0 to 1.0 — civilized/ruin props (crates, barrels...)
   allowedProps?: string[]; // Prop families allowed by this biome
+  groundTexture?: string; // URL path to tileable ground texture (1024x1024)
+  pathTexture?: string;   // URL path to tileable path texture (1024x1024)
 }
 
 export const BIOMES: Record<string, BiomeConfig> = {
@@ -78,12 +80,16 @@ export const BIOMES: Record<string, BiomeConfig> = {
     decorDensity: 0.45,
     allowedDecor: ['grassTuft', 'grassTuft', 'bush', 'mushroom'],
     boundaryReplacement: 5,
+    groundTexture: '/textures/emerald-meadow-grass-001.png',
+    pathTexture: '/textures/village-road-001.png',
   },
   coast: {
     groundColor: 0xd6b37a, 
     decorDensity: 0.15,
     allowedDecor: ['pebble', 'grassTuft', 'bush'],
     boundaryReplacement: 6,
+    groundTexture: '/textures/dry-grass-001.png',
+    pathTexture: '/textures/village-road-001.png',
   },
   town: {
     groundColor: 0x48793b,
@@ -92,18 +98,24 @@ export const BIOMES: Record<string, BiomeConfig> = {
     allowedDecor: ['grassTuft', 'pebble'],
     propDensity: 0.05,
     allowedProps: ['crate', 'barrel', 'bench', 'fence', 'crate_stack'],
+    groundTexture: '/textures/clover-flower-meadow-001.png',
+    pathTexture: '/textures/village-road-001.png',
   },
   crypt: {
     groundColor: 0x24283b,
     wallColor: 0x414868,
     decorDensity: 0.05,
     allowedDecor: ['pebble', 'mushroom'],
+    groundTexture: '/textures/continuous-granite-bedrock-001.png',
+    pathTexture: '/textures/rain-dark-cobbles-001.png',
   },
   fire_temple: {
     groundColor: 0x3d1a1a,
     wallColor: 0x6b2b2b,
     decorDensity: 0.08,
     allowedDecor: ['pebble'],
+    groundTexture: '/textures/dry-cracked-earth-001.png',
+    pathTexture: '/textures/rain-dark-cobbles-001.png',
   },
   ruins: {
     groundColor: 0x3e4c59,
@@ -113,17 +125,23 @@ export const BIOMES: Record<string, BiomeConfig> = {
     boundaryReplacement: 6, 
     propDensity: 0.02,
     allowedProps: ['crate', 'barrel', 'crate_stack'],
+    groundTexture: '/textures/loose-earth-001.png',
+    pathTexture: '/textures/rain-dark-cobbles-001.png',
   },
   lighthouse: {
     groundColor: 0x1e3a5f,
     wallColor: 0x2563eb,
     decorDensity: 0.0,
     allowedDecor: [],
+    groundTexture: '/textures/rain-dark-cobbles-001.png',
+    pathTexture: '/textures/village-road-001.png',
   },
   plains: {
     groundColor: 0x447738,
     decorDensity: 0.2,
     allowedDecor: ['grassTuft', 'pebble'],
     boundaryReplacement: 5,
+    groundTexture: '/textures/mossy-meadow-grass-001.png',
+    pathTexture: '/textures/village-road-001.png',
   }
 };
