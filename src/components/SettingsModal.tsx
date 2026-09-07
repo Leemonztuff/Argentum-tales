@@ -333,6 +333,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
           </div>
 
+          {/* Head Calibration */}
+          <div className="hud-blur border border-cyan-500/30 rounded-xl p-3 bg-cyan-950/20 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Sliders className="w-4 h-4 text-cyan-400" />
+              <div>
+                <h4 className="text-xs font-bold text-cyan-300 font-medieval">Calibración de Sprites</h4>
+                <p className="text-[11px] text-slate-400">Ajusta la posición y escala del head sobre el body del jugador.</p>
+              </div>
+            </div>
+            <button
+              id="btn-open-head-calibration"
+              onClick={() => {
+                handleClose();
+                useUIStore.getState().openModal('headCalibration');
+              }}
+              className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 font-pixel text-xs transition"
+            >
+              Calibrar
+            </button>
+          </div>
+
           {/* Return to Title / Character Select */}
           {onReturnToTitle && (
             <div className="hud-blur border border-amber-500/30 rounded-xl p-3 bg-amber-950/20 flex items-center justify-between gap-3 mt-2">

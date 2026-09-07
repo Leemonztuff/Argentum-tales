@@ -60,6 +60,7 @@ import { OrientationPrompt } from './components/OrientationPrompt';
 import { HelpModal } from './components/HelpModal';
 import { DataStudioModal } from './components/DataStudioModal';
 import { SettingsModal } from './components/SettingsModal';
+import { HeadCalibrationUI } from './components/HeadCalibrationUI';
 import { TitleScreen } from './components/TitleScreen';
 import { ToastNotification, ToastMessage } from './components/ToastNotification';
 import { useUIStore, ModalId } from './ui';
@@ -1714,6 +1715,9 @@ export default function App() {
           refreshSlots();
         }}
       />
+
+      {/* Head Calibration UI */}
+      <HeadCalibrationUI />
 
       {/* Death Modal (§5.8) */}
       {deathInfo && (

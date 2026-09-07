@@ -29,7 +29,8 @@ export type ModalId =
   | 'quests'
   | 'help'
   | 'dataStudio'
-  | 'settings';
+  | 'settings'
+  | 'headCalibration';
 
 export interface UIStoreState {
   // --- Modals ---
@@ -78,6 +79,7 @@ export const useUIStore = create<UIStoreState>()(
         help: false,
         dataStudio: false,
         settings: false,
+        headCalibration: false,
       },
       toggleModal: (id) =>
         set((s) => ({
@@ -96,6 +98,7 @@ export const useUIStore = create<UIStoreState>()(
             help: false,
             dataStudio: false,
             settings: false,
+            headCalibration: false,
           },
         })),
 

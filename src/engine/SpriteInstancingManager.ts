@@ -9,19 +9,52 @@ export interface MobBatch {
   activeCount: number;
 }
 
+/**
+ * Creates a high-fidelity radial gradient texture for 2.5D contact shadows.
+ * Features a tight ambient occlusion core and soft quadratic penumbra falloff.
+ */
+function createSoftShadowTexture(): THREE.Texture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const maxR = size / 2;
+
+  ctx.clearRect(0, 0, size, size);
+
+  // Multi-stop natural contact shadow gradient
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+  grad.addColorStop(0.0, 'rgba(2, 6, 23, 0.85)');    // Inner ambient occlusion core directly under feet
+  grad.addColorStop(0.25, 'rgba(3, 7, 26, 0.65)');   // Contact body shadow
+  grad.addColorStop(0.55, 'rgba(8, 15, 32, 0.32)');  // Soft penumbra
+  grad.addColorStop(0.85, 'rgba(15, 23, 42, 0.08)'); // Outer feathering
+  grad.addColorStop(1.0, 'rgba(15, 23, 42, 0.0)');   // Smooth edge fade
+
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export class SpriteInstancingManager {
   private entityGroup: THREE.Group;
   private sharedBillboardGeometry: THREE.PlaneGeometry;
-  private sharedShadowGeometry: THREE.CircleGeometry;
+  private sharedShadowGeometry: THREE.PlaneGeometry;
   private sharedShadowMaterial: THREE.MeshBasicMaterial;
   private instancedShadowMesh: THREE.InstancedMesh;
 
   private mobInstancedBatches: Map<string, MobBatch> = new Map();
   private shadowIndex: number = 0;
   private dummyObj: THREE.Object3D = new THREE.Object3D();
-
-  // Lightweight profiling counter
-  public perfCounters = { batchCreates: 0, batchDisposals: 0, batchHits: 0 };
 
   constructor(entityGroup: THREE.Group) {
     this.entityGroup = entityGroup;
@@ -32,14 +65,17 @@ export class SpriteInstancingManager {
     this.sharedBillboardGeometry.computeVertexNormals();
     this.sharedBillboardGeometry.computeTangents();
 
-    // Shared shadow geometry & material
-    this.sharedShadowGeometry = new THREE.CircleGeometry(1, 16);
+    // Shared soft contact shadow geometry & material
+    this.sharedShadowGeometry = new THREE.PlaneGeometry(1, 1);
     this.sharedShadowGeometry.rotateX(-Math.PI / 2);
+
     this.sharedShadowMaterial = new THREE.MeshBasicMaterial({
-      color: 0x020617,
+      map: createSoftShadowTexture(),
       transparent: true,
-      opacity: 0.38,
       depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
 
     this.instancedShadowMesh = new THREE.InstancedMesh(
@@ -47,7 +83,7 @@ export class SpriteInstancingManager {
       this.sharedShadowMaterial,
       512
     );
-    this.instancedShadowMesh.frustumCulled = false;
+    this.instancedShadowMesh.frustumCulled = true;
     this.instancedShadowMesh.count = 0;
     this.entityGroup.add(this.instancedShadowMesh);
   }
@@ -66,9 +102,13 @@ export class SpriteInstancingManager {
 
   public packShadowInstance(x: number, y: number, radius: number): void {
     if (!this.instancedShadowMesh) return;
-    this.dummyObj.position.set(x, 0.01, y);
+    // 2.5D Elliptical proportion: slightly wider in X and foreshortened in Z
+    const scaleX = radius * 2.6;
+    const scaleZ = radius * 1.8;
+
+    this.dummyObj.position.set(x, 0.015, y);
     this.dummyObj.rotation.set(0, 0, 0);
-    this.dummyObj.scale.set(radius, 1, radius);
+    this.dummyObj.scale.set(scaleX, 1, scaleZ);
     this.dummyObj.updateMatrix();
 
     this.instancedShadowMesh.setMatrixAt(this.shadowIndex++, this.dummyObj.matrix);
@@ -86,10 +126,9 @@ export class SpriteInstancingManager {
   ): void {
     let batch = this.mobInstancedBatches.get(batchKey);
     if (!batch) {
-      this.perfCounters.batchCreates++;
       const mat = createMaterialCallback();
       const instancedMesh = new THREE.InstancedMesh(this.sharedBillboardGeometry, mat, 256);
-      instancedMesh.frustumCulled = false;
+      instancedMesh.frustumCulled = true;
       this.entityGroup.add(instancedMesh);
       batch = {
         instancedMesh,
@@ -98,15 +137,14 @@ export class SpriteInstancingManager {
         activeCount: 0,
       };
       this.mobInstancedBatches.set(batchKey, batch);
-    } else {
-      this.perfCounters.batchHits++;
-      if (updateMaterialCallback) {
-        updateMaterialCallback(batch.material);
-      }
+    } else if (updateMaterialCallback) {
+      updateMaterialCallback(batch.material);
     }
 
     const idx = batch.activeCount;
-    this.dummyObj.position.set(x, 0, y);
+    const bobOffset = 0;
+
+    this.dummyObj.position.set(x, bobOffset, y);
     this.dummyObj.scale.set(scale, scale, 1);
     this.dummyObj.quaternion.copy(cameraQuaternion);
     this.dummyObj.updateMatrix();
@@ -117,31 +155,15 @@ export class SpriteInstancingManager {
   }
 
   public commitFrame(): void {
-    const emptyKeys: string[] = [];
-    this.mobInstancedBatches.forEach((batch, key) => {
+    this.mobInstancedBatches.forEach((batch) => {
       batch.instancedMesh.count = batch.activeCount;
       if (batch.activeCount > 0) {
         batch.instancedMesh.instanceMatrix.needsUpdate = true;
         batch.instancedMesh.visible = true;
       } else {
         batch.instancedMesh.visible = false;
-        // Track empty batches for recycling below (R1) — prevents unbounded draw-call/V-RAM growth.
-        emptyKeys.push(key);
       }
     });
-
-    // Any batch with no active mobs this frame is no longer needed (state combos like
-    // HP decay/orientation/anim-frame go idle as mobs change state). Reclaim it so
-    // combat does not accumulate an ever-growing set of InstancedMeshes.
-    for (const key of emptyKeys) {
-      const batch = this.mobInstancedBatches.get(key);
-      if (!batch) continue;
-      this.perfCounters.batchDisposals++;
-      this.mobInstancedBatches.delete(key);
-      this.entityGroup.remove(batch.instancedMesh);
-      batch.instancedMesh.dispose();
-      batch.material.dispose();
-    }
 
     if (this.instancedShadowMesh) {
       this.instancedShadowMesh.count = this.shadowIndex;
@@ -172,10 +194,6 @@ export class SpriteInstancingManager {
       }
     }
     return undefined;
-  }
-
-  public getBatchCount(): number {
-    return this.mobInstancedBatches.size;
   }
 
   public setNormalMapEnabled(enabled: boolean): void {
