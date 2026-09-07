@@ -1491,7 +1491,8 @@ export class Game3DRenderer {
 
   /**
    * Composites body + head spritesheets onto a single 256×256 canvas.
-   * Uses per-direction anatomical ratios and head calibration for precise placement.
+   * Uses getNonEmptyBounds per frame to prevent lateral wobble from uneven cell padding.
+   * Uniform scale ensures all directions keep the same pixel density.
    */
   public renderPlayerComposite(
     bodyUrl: string,
@@ -1526,16 +1527,29 @@ export class Game3DRenderer {
     const bodySx = Math.floor(bodyCol * bodyFrameW);
     const bodySy = Math.floor(bodyRow * bodyFrameH);
 
-    // Scale body to fit within 256×256, feet at y=242
-    const bodyTargetH = 180;
-    const bodyScale = bodyTargetH / bodyFrameH;
-    const bodyDestW = Math.floor(bodyFrameW * bodyScale);
-    const bodyDestH = Math.floor(bodyFrameH * bodyScale);
-    const bodyDestX = Math.floor((256 - bodyDestW) / 2);
-    const bodyDestY = 242 - bodyDestH;
+    // Detect actual content bounds to prevent wobble from uneven cell padding
+    const bodyCrop = getNonEmptyBounds(bodyImg, bodySx, bodySy, bodyFrameW, bodyFrameH);
+    const bodySrcX = bodyCrop ? bodySx + bodyCrop.x : bodySx;
+    const bodySrcY = bodyCrop ? bodySy + bodyCrop.y : bodySy;
+    const bodySrcW = bodyCrop ? bodyCrop.w : bodyFrameW;
+    const bodySrcH = bodyCrop ? bodyCrop.h : bodyFrameH;
 
-    // Chroma-key body layer
-    const bodyLayer = drawLayerWithMagentaKey(bodyImg, bodySx, bodySy, bodyFrameW, bodyFrameH, 0, 0, bodyDestW, bodyDestH, 1);
+    // Uniform scale based on FULL frame size (not crop) so all directions keep same pixel density
+    const bodyMaxDim = Math.max(bodyFrameW, bodyFrameH);
+    const bodyTargetMax = 180;
+    const bodyScale = isPixelMode
+      ? Math.max(1, Math.floor(bodyTargetMax / bodyMaxDim))
+      : (bodyTargetMax / bodyMaxDim);
+
+    let bodyDestW = Math.floor(bodySrcW * bodyScale);
+    let bodyDestH = Math.floor(bodySrcH * bodyScale);
+    if (bodyDestH > 180) { const r = 180 / bodyDestH; bodyDestH = 180; bodyDestW = Math.floor(bodyDestW * r); }
+    if (bodyDestW > 220) { const r = 220 / bodyDestW; bodyDestW = 220; bodyDestH = Math.floor(bodyDestH * r); }
+
+    const bodyDestX = Math.floor((256 - bodyDestW) / 2);
+    const bodyDestY = Math.max(24, Math.floor(242 - bodyDestH));
+
+    const bodyLayer = drawLayerWithMagentaKey(bodyImg, bodySrcX, bodySrcY, bodySrcW, bodySrcH, 0, 0, bodyDestW, bodyDestH, 1);
     ctx.drawImage(bodyLayer, bodyDestX, bodyDestY);
 
     // --- HEAD LAYER ---
@@ -1550,14 +1564,21 @@ export class Game3DRenderer {
     const headSx = Math.floor(headCol * headFrameW);
     const headSy = Math.floor(headRow * headFrameH);
 
+    // Detect head content bounds
+    const headCrop = getNonEmptyBounds(headImg, headSx, headSy, headFrameW, headFrameH);
+    const headSrcX = headCrop ? headSx + headCrop.x : headSx;
+    const headSrcY = headCrop ? headSy + headCrop.y : headSy;
+    const headSrcW = headCrop ? headCrop.w : headFrameW;
+    const headSrcH = headCrop ? headCrop.h : headFrameH;
+
     const rowIdx = bodyRow;
     const shoulderRatio = Game3DRenderer.SHOULDER_RATIOS[rowIdx];
     const chinRatio = Game3DRenderer.CHIN_RATIOS[rowIdx];
 
-    // Head scale from calibration
-    const headAspect = headFrameW / headFrameH;
+    // Head scale from calibration relative to body dest width
+    const headContentAspect = headSrcW / headSrcH;
     const headDestW = Math.round(bodyDestW * calib.scaleRatio);
-    const headDestH = Math.round(headDestW / headAspect);
+    const headDestH = Math.round(headDestW / headContentAspect);
 
     // Horizontal: centered + directional offset + calibration offsetX
     const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
@@ -1568,11 +1589,9 @@ export class Game3DRenderer {
     const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
     const headDestY = Math.round(shoulderY + overlap - (chinRatio * headDestH) + calib.offsetY);
 
-    // Chroma-key head layer
-    const headLayer = drawLayerWithMagentaKey(headImg, headSx, headSy, headFrameW, headFrameH, 0, 0, headDestW, headDestH, 1);
+    const headLayer = drawLayerWithMagentaKey(headImg, headSrcX, headSrcY, headSrcW, headSrcH, 0, 0, headDestW, headDestH, 1);
     ctx.drawImage(headLayer, headDestX, headDestY);
 
-    // Final magenta cleanup
     applyMagentaKeyToCanvas(canvas);
 
     return canvas;
