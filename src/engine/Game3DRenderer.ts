@@ -13,6 +13,56 @@ import { PostProcessingManager } from './PostProcessingManager';
 
 export { type SpriteMaterialTextures };
 
+// Head Calibration System for body+head sprite composition
+export interface HeadCalibrationConfig {
+  offsetY: number;
+  offsetX: number;
+  scaleRatio: number;
+  overlap: number;
+}
+
+export const DEFAULT_HEAD_CALIBRATION: HeadCalibrationConfig = {
+  offsetY: -15,
+  offsetX: 0,
+  scaleRatio: 1.2,
+  overlap: 4,
+};
+
+let currentHeadCalibration: HeadCalibrationConfig = { ...DEFAULT_HEAD_CALIBRATION };
+const activeRenderers: Set<Game3DRenderer> = new Set();
+
+try {
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem('ao_head_calibration');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed.offsetY === 'number') currentHeadCalibration.offsetY = parsed.offsetY;
+      if (typeof parsed.offsetX === 'number') currentHeadCalibration.offsetX = parsed.offsetX;
+      if (typeof parsed.scaleRatio === 'number') currentHeadCalibration.scaleRatio = parsed.scaleRatio;
+      if (typeof parsed.overlap === 'number') currentHeadCalibration.overlap = parsed.overlap;
+    }
+  }
+} catch (e) {
+  console.warn('[Game3DRenderer] Error loading saved head calibration:', e);
+}
+
+export function getHeadCalibration(): HeadCalibrationConfig {
+  return { ...currentHeadCalibration };
+}
+
+export function setHeadCalibration(config: Partial<HeadCalibrationConfig>): void {
+  currentHeadCalibration = { ...currentHeadCalibration, ...config };
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('ao_head_calibration', JSON.stringify(currentHeadCalibration));
+    }
+  } catch (e) {}
+
+  activeRenderers.forEach((renderer) => {
+    renderer.invalidateAllCharacterSprites();
+  });
+}
+
 // Magenta/fuchsia chroma-key: pixels close to (255, 0, 255) become transparent.
 // Used for spritesheets exported with a magenta background instead of an alpha
 // channel (e.g. JPEG player spritesheets). Pure-alpha PNGs are left untouched.
@@ -194,6 +244,14 @@ export class Game3DRenderer {
   private chestMeshes: Map<string, THREE.Group> = new Map();
   private gatherMeshes: Map<string, THREE.Group> = new Map();
 
+  // Atmospheric particles (dust motes / embers)
+  private atmosphericParticles: THREE.Points | null = null;
+  private atmosphericMaterial: THREE.PointsMaterial | null = null;
+  private atmosphericPositions: Float32Array | null = null;
+  private atmosphericVelocities: Float32Array | null = null;
+  private atmosphericParticlesEnabled: boolean = true;
+  private playerBaseLightIntensity: number = 0.8;
+
   // Raycasting for target selection
   private raycaster: THREE.Raycaster = new THREE.Raycaster();
   private mouseVector: THREE.Vector2 = new THREE.Vector2();
@@ -248,13 +306,13 @@ export class Game3DRenderer {
      this.pbrGenerator.clearCaches();
      this.playerNeedsTextureRefresh = true;
      this.mobsNeedTextureRefresh = true;
-     const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
-     if (playerSprites.length > 0) {
-       playerSprites.forEach((sprite) => {
-         const m = sprite.material as any;
-         m.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
-       });
-     }
+      const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
+      if (playerSprites.length > 0) {
+        playerSprites.forEach((sprite) => {
+          const m = sprite.material as any;
+          if (m.normalScale) m.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
+        });
+      }
     this.instancingManager.setNormalScale(this.pbrGenerator.spriteNormalStrength);
     this.npcSprites.forEach((mesh) => {
       mesh.material.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
@@ -380,6 +438,7 @@ export class Game3DRenderer {
     headUrl: string;
   } | null = null;
   private playerNeedsTextureRefresh: boolean = false;
+  private playerCompositeKey: string = '';
   private playerWalkDistance: number = 0;
   private playerLastAnimFrame: number = -1;
 
@@ -507,6 +566,28 @@ export class Game3DRenderer {
     this.spriteTextureCache.clear();
     this.playerNeedsTextureRefresh = true;
     this.mobsNeedTextureRefresh = true;
+  }
+
+  public invalidateAllCharacterSprites(): void {
+    this.spriteTextureCache.forEach((tex) => tex.dispose());
+    this.spriteTextureCache.clear();
+    this.pbrGenerator.clearCaches();
+    this.playerNeedsTextureRefresh = true;
+    this.playerCompositeKey = '';
+    this.mobsNeedTextureRefresh = true;
+    // Destroy playerGroup so it's recreated with fresh calibration values
+    if (this.playerGroup) {
+      this.entityGroup.remove(this.playerGroup);
+      this.playerGroup.traverse((child) => {
+        if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
+        if ((child as THREE.Sprite).material) {
+          const mat = (child as THREE.Sprite).material as THREE.SpriteMaterial;
+          if (mat.map) mat.map.dispose();
+          mat.dispose();
+        }
+      });
+      this.playerGroup = null;
+    }
   }
 
   public togglePixelPerfect(): boolean {
@@ -640,7 +721,7 @@ export class Game3DRenderer {
     this.telegraphGroup = new THREE.Group();
 
     this.instancingManager = new SpriteInstancingManager(this.entityGroup);
-    const initRatio = this.deviceHighQuality ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 1.5);
+    const initRatio = Math.min(window.devicePixelRatio, 2);
     this.postProcessingManager = new PostProcessingManager(
       container.clientWidth,
       container.clientHeight,
@@ -650,22 +731,16 @@ export class Game3DRenderer {
     // Renderer — Pixel-Perfect setup with crisp image rendering on canvas
     this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    // Clamp pixel ratio on mobile/low-power devices to protect frame budget (L2).
-    const ratio = this.deviceHighQuality ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 1.5);
-    this.renderer.setPixelRatio(ratio);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for performance
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // Tone mapping for AAA-grade highlight rolloff (L1): ACES on capable devices,
-    // cheaper Reinhard on low-power/mobile targets.
-    this.renderer.toneMapping = this.deviceHighQuality ? THREE.ACESFilmicToneMapping : THREE.ReinhardToneMapping;
-    this.renderer.toneMappingExposure = this.deviceHighQuality ? 1.0 : 1.0;
+    // AAA Shading: Filmic Tonemapping prevents "burned" whites and provides natural color roll-off
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
 
-    // Set CSS image-rendering to force pixelated upscale
-    this.renderer.domElement.style.imageRendering = 'pixelated';
-    (this.renderer.domElement.style as any).imageRendering = '-moz-crisp-edges';
-    (this.renderer.domElement.style as any).imageRendering = 'crisp-edges';
-    (this.renderer.domElement.style as any).imageRendering = '-webkit-optimize-contrast';
+    // HD-2D Industry Standard: Canvas uses smooth native hardware scaling, while individual sprite textures use point filtering
+    this.renderer.domElement.style.imageRendering = 'auto';
     container.appendChild(this.renderer.domElement);
 
     this.scene.add(this.tileGroup);
@@ -703,7 +778,9 @@ export class Game3DRenderer {
     this.initRaycastingEvents();
 
     this.initGlobalLights();
+    this.initAtmosphericParticles();
     this.initInputListeners();
+    activeRenderers.add(this);
     this.startLoop();
   }
 
@@ -909,27 +986,154 @@ export class Game3DRenderer {
     this.lightGroup.add(this.playerLight);
   }
 
+  private initAtmosphericParticles(): void {
+    const particleCount = 160;
+    const positions = new Float32Array(particleCount * 3);
+    const velocities = new Float32Array(particleCount * 3);
+
+    for (let i = 0; i < particleCount; i++) {
+      positions[i * 3 + 0] = (Math.random() - 0.5) * 28;
+      positions[i * 3 + 1] = 0.3 + Math.random() * 5.0;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 28;
+
+      velocities[i * 3 + 0] = (Math.random() - 0.5) * 0.4;
+      velocities[i * 3 + 1] = 0.15 + Math.random() * 0.3;
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.4;
+    }
+
+    this.atmosphericPositions = positions;
+    this.atmosphericVelocities = velocities;
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    // Generate soft radial glow particle texture for luminous dust motes & embers
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d')!;
+    const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.35, 'rgba(255, 255, 255, 0.75)');
+    grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.2)');
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 32, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+
+    this.atmosphericMaterial = new THREE.PointsMaterial({
+      size: 0.32,
+      map: texture,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      opacity: 0.55,
+      color: 0xfef08a,
+    });
+
+    this.atmosphericParticles = new THREE.Points(geometry, this.atmosphericMaterial);
+    this.atmosphericParticles.frustumCulled = false;
+    this.vfxGroup.add(this.atmosphericParticles);
+  }
+
+  private updateAtmosphericParticles(playerPx: number, playerPy: number): void {
+    if (!this.atmosphericParticles || !this.atmosphericPositions || !this.atmosphericVelocities || !this.atmosphericParticlesEnabled) {
+      return;
+    }
+
+    const pos = this.atmosphericPositions;
+    const vel = this.atmosphericVelocities;
+    const count = pos.length / 3;
+    const time = Date.now() * 0.0012;
+
+    for (let i = 0; i < count; i++) {
+      const idx = i * 3;
+      pos[idx + 0] += Math.sin(time + i) * 0.005 + vel[idx + 0] * 0.008;
+      pos[idx + 1] += Math.cos(time * 0.8 + i) * 0.004 + vel[idx + 1] * 0.006;
+      pos[idx + 2] += Math.sin(time * 0.6 + i * 1.5) * 0.005 + vel[idx + 2] * 0.008;
+
+      if (pos[idx + 0] < playerPx - 14) pos[idx + 0] = playerPx + 14;
+      if (pos[idx + 0] > playerPx + 14) pos[idx + 0] = playerPx - 14;
+      if (pos[idx + 2] < playerPy - 14) pos[idx + 2] = playerPy + 14;
+      if (pos[idx + 2] > playerPy + 14) pos[idx + 2] = playerPy - 14;
+      if (pos[idx + 1] < 0.2) pos[idx + 1] = 5.2;
+      if (pos[idx + 1] > 5.5) pos[idx + 1] = 0.3;
+    }
+
+    (this.atmosphericParticles.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+  }
+
   public updateLightingByTime(timeProgress: number, isNight: boolean) {
     if (!this.hemiLight || !this.ambientLight || !this.dirLight) return;
 
-    if (isNight) {
-      // Night lighting: deep indigo/blue night
-      this.hemiLight.color.setHex(0x1e1b4b);
-      this.hemiLight.groundColor.setHex(0x090d16);
-      this.hemiLight.intensity = 0.35;
+    const fog = this.scene.fog as THREE.FogExp2;
 
-      this.ambientLight.color.setHex(0x38bdf8);
-      this.ambientLight.intensity = 0.2;
+    // Helper: Synchronize fog color with scene background color to avoid empty black voids/clipping
+    const setAtmosphericColor = (hexColor: number) => {
+      if (fog) fog.color.setHex(hexColor);
+      if (this.scene.background instanceof THREE.Color) {
+        this.scene.background.setHex(hexColor);
+      } else {
+        this.scene.background = new THREE.Color(hexColor);
+      }
+    };
 
-      this.dirLight.color.setHex(0x60a5fa);
-      this.dirLight.intensity = 0.35;
+    // 1. Dungeon / Cave atmosphere override
+    if (this.currentMap?.isDungeon) {
+      this.hemiLight.color.setHex(0x0f172a);
+      this.hemiLight.groundColor.setHex(0x020617);
+      this.hemiLight.intensity = 0.25;
+
+      this.ambientLight.color.setHex(0x1e293b);
+      this.ambientLight.intensity = 0.15;
+
+      this.dirLight.color.setHex(0x38bdf8);
+      this.dirLight.intensity = 0.1;
+
+      setAtmosphericColor(0x020617);
 
       if (this.playerLight) {
-        this.playerLight.intensity = 1.35;
-        this.playerLight.distance = 10;
+        // Flickering warm torch aura inside dungeons
+        this.playerBaseLightIntensity = 1.45;
+        this.playerLight.color.setHex(0xfbbf24);
+        this.playerLight.intensity = this.playerBaseLightIntensity;
+        this.playerLight.distance = 7.5; // Optimized to prevent flashlight effect
+      }
+      if (this.atmosphericMaterial) {
+        this.atmosphericMaterial.color.setHex(0xfb923c);
+        this.atmosphericMaterial.opacity = 0.50;
+      }
+      return;
+    }
+
+    // 2. Overworld Day/Night Cycle
+    if (isNight) {
+      // NIGHT: Layered moonlight atmosphere (no black crush)
+      this.hemiLight.color.setHex(0x1e293b);
+      this.hemiLight.groundColor.setHex(0x0f172a);
+      this.hemiLight.intensity = 0.45;
+
+      this.ambientLight.color.setHex(0x334155);
+      this.ambientLight.intensity = 0.28;
+
+      this.dirLight.color.setHex(0xbae6fd);
+      this.dirLight.intensity = 0.55;
+
+      setAtmosphericColor(0x0b1329);
+
+      if (this.playerLight) {
+        this.playerBaseLightIntensity = 0.55;
+        this.playerLight.color.setHex(0xfef08a);
+        this.playerLight.intensity = this.playerBaseLightIntensity;
+        this.playerLight.distance = 5.0;
+      }
+      if (this.atmosphericMaterial) {
+        this.atmosphericMaterial.color.setHex(0x38bdf8);
+        this.atmosphericMaterial.opacity = 0.60;
       }
     } else if (timeProgress >= 0.22 && timeProgress < 0.28) {
-      // Sunrise
+      // Sunrise: warm golden morning
       this.hemiLight.color.setHex(0xfde047);
       this.hemiLight.groundColor.setHex(0x334155);
       this.hemiLight.intensity = 0.65;
@@ -939,8 +1143,21 @@ export class Game3DRenderer {
 
       this.dirLight.color.setHex(0xfb923c);
       this.dirLight.intensity = 0.95;
+
+      setAtmosphericColor(0x94a3b8);
+
+      if (this.playerLight) {
+        this.playerBaseLightIntensity = 0.7;
+        this.playerLight.color.setHex(0xfef08a);
+        this.playerLight.intensity = this.playerBaseLightIntensity;
+        this.playerLight.distance = 6.0;
+      }
+      if (this.atmosphericMaterial) {
+        this.atmosphericMaterial.color.setHex(0xfef08a);
+        this.atmosphericMaterial.opacity = 0.40;
+      }
     } else if (timeProgress >= 0.72 && timeProgress < 0.78) {
-      // Sunset
+      // Sunset: deep warm orange
       this.hemiLight.color.setHex(0xf97316);
       this.hemiLight.groundColor.setHex(0x1e293b);
       this.hemiLight.intensity = 0.6;
@@ -950,6 +1167,19 @@ export class Game3DRenderer {
 
       this.dirLight.color.setHex(0xea580c);
       this.dirLight.intensity = 0.8;
+
+      setAtmosphericColor(0x44403c);
+
+      if (this.playerLight) {
+        this.playerBaseLightIntensity = 0.75;
+        this.playerLight.color.setHex(0xfbbf24);
+        this.playerLight.intensity = this.playerBaseLightIntensity;
+        this.playerLight.distance = 6.5;
+      }
+      if (this.atmosphericMaterial) {
+        this.atmosphericMaterial.color.setHex(0xfb923c);
+        this.atmosphericMaterial.opacity = 0.45;
+      }
     } else {
       // Day
       this.hemiLight.color.setHex(0xfffbeb);
@@ -962,9 +1192,17 @@ export class Game3DRenderer {
       this.dirLight.color.setHex(0xfff7ed);
       this.dirLight.intensity = 1.25;
 
+      setAtmosphericColor(0xc8d6e5);
+
       if (this.playerLight) {
-        this.playerLight.intensity = 0.8;
+        this.playerBaseLightIntensity = 0.8;
+        this.playerLight.color.setHex(0xfef08a);
+        this.playerLight.intensity = this.playerBaseLightIntensity;
         this.playerLight.distance = 8;
+      }
+      if (this.atmosphericMaterial) {
+        this.atmosphericMaterial.color.setHex(0xfef08a);
+        this.atmosphericMaterial.opacity = 0.35;
       }
     }
   }
@@ -975,8 +1213,7 @@ export class Game3DRenderer {
     const height = this.container.clientHeight || 1;
     this.cameraManager.handleResize(width, height);
     this.renderer.setSize(width, height);
-    // Keep post-processing rendering resolution aligned with the clamped pixel ratio (L2).
-    const ratio = this.deviceHighQuality ? window.devicePixelRatio : Math.min(window.devicePixelRatio, 1.5);
+    const ratio = Math.min(window.devicePixelRatio, 2);
     this.renderer.setPixelRatio(ratio);
     this.postProcessingManager.setSize(width, height, ratio);
   }
@@ -1244,6 +1481,99 @@ export class Game3DRenderer {
       ctx.fillText(`DRAW: [${debugDestX},${debugDestY},${debugDestW},${debugDestH}]`, 6, 32);
       ctx.restore();
     }
+
+    return canvas;
+  }
+
+  // Per-direction anatomical ratios for head placement on body
+  private static readonly SHOULDER_RATIOS = [0.091, 0.129, 0.129, 0.106]; // down, left, right, up
+  private static readonly CHIN_RATIOS = [0.940, 0.965, 0.970, 0.990];    // down, left, right, up
+
+  /**
+   * Composites body + head spritesheets onto a single 256×256 canvas.
+   * Uses per-direction anatomical ratios and head calibration for precise placement.
+   */
+  public renderPlayerComposite(
+    bodyUrl: string,
+    headUrl: string,
+    facing: 'up' | 'down' | 'left' | 'right',
+    animFrame: number
+  ): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, 256, 256);
+
+    const calib = getHeadCalibration();
+    const isPixelMode = this.pixelPerfectEnabled;
+
+    ctx.imageSmoothingEnabled = !isPixelMode;
+
+    const bodyImg = this.getOrLoadImage(bodyUrl);
+    const headImg = this.getOrLoadImage(headUrl);
+    if (!bodyImg || !headImg) return canvas;
+
+    // --- BODY LAYER ---
+    const bodyFrameW = Math.floor(bodyImg.width / 4);
+    const bodyFrameH = Math.floor(bodyImg.height / 4);
+    const bodyCol = animFrame % 4;
+    let bodyRow = 0;
+    if (facing === 'left') bodyRow = 1;
+    else if (facing === 'right') bodyRow = 2;
+    else if (facing === 'up') bodyRow = 3;
+
+    const bodySx = Math.floor(bodyCol * bodyFrameW);
+    const bodySy = Math.floor(bodyRow * bodyFrameH);
+
+    // Scale body to fit within 256×256, feet at y=242
+    const bodyTargetH = 180;
+    const bodyScale = bodyTargetH / bodyFrameH;
+    const bodyDestW = Math.floor(bodyFrameW * bodyScale);
+    const bodyDestH = Math.floor(bodyFrameH * bodyScale);
+    const bodyDestX = Math.floor((256 - bodyDestW) / 2);
+    const bodyDestY = 242 - bodyDestH;
+
+    // Chroma-key body layer
+    const bodyLayer = drawLayerWithMagentaKey(bodyImg, bodySx, bodySy, bodyFrameW, bodyFrameH, 0, 0, bodyDestW, bodyDestH, 1);
+    ctx.drawImage(bodyLayer, bodyDestX, bodyDestY);
+
+    // --- HEAD LAYER ---
+    const headFrameW = Math.floor(headImg.width / 4);
+    const headFrameH = Math.floor(headImg.height / 4);
+    const headCol = animFrame % 4;
+    let headRow = 0;
+    if (facing === 'left') headRow = 1;
+    else if (facing === 'right') headRow = 2;
+    else if (facing === 'up') headRow = 3;
+
+    const headSx = Math.floor(headCol * headFrameW);
+    const headSy = Math.floor(headRow * headFrameH);
+
+    const rowIdx = bodyRow;
+    const shoulderRatio = Game3DRenderer.SHOULDER_RATIOS[rowIdx];
+    const chinRatio = Game3DRenderer.CHIN_RATIOS[rowIdx];
+
+    // Head scale from calibration
+    const headAspect = headFrameW / headFrameH;
+    const headDestW = Math.round(bodyDestW * calib.scaleRatio);
+    const headDestH = Math.round(headDestW / headAspect);
+
+    // Horizontal: centered + directional offset + calibration offsetX
+    const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
+    const headDestX = Math.round((256 - headDestW) / 2) + dirOffsetX + calib.offsetX;
+
+    // Vertical: shoulder position + overlap - chin ratio + calibration offsetY
+    const shoulderY = bodyDestY + Math.round(shoulderRatio * bodyDestH);
+    const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
+    const headDestY = Math.round(shoulderY + overlap - (chinRatio * headDestH) + calib.offsetY);
+
+    // Chroma-key head layer
+    const headLayer = drawLayerWithMagentaKey(headImg, headSx, headSy, headFrameW, headFrameH, 0, 0, headDestW, headDestH, 1);
+    ctx.drawImage(headLayer, headDestX, headDestY);
+
+    // Final magenta cleanup
+    applyMagentaKeyToCanvas(canvas);
 
     return canvas;
   }
@@ -2542,54 +2872,56 @@ export class Game3DRenderer {
           const facing = this.playerRenderParams.facing;
 
           if (!this.playerGroup) {
-            // Load both spritesheet textures
-            const bodyTexInfo = this.getOrCreateSpriteSheetTextures(bodyUrl);
-            const headTexInfo = this.getOrCreateSpriteSheetTextures(headUrl);
-            if (!bodyTexInfo || !headTexInfo) return;
-
-            const bodyMat = this.createSpriteMaterial(bodyTexInfo);
-            const headMat = this.createSpriteMaterial(headTexInfo);
-
             const pScale = this.getPixelPerfectSpriteScale(false);
 
-            // Sprite cells: body=264x264, head=128x128. Head is 128/264 of body height.
-            // Both pivots are bottom-center (JSON pivot y=1.0).
-            // Body shows full character (feet to head). Head overlay replaces the head area.
-            // Head scaled 20% bigger than pixel-perfect ratio for visual balance.
-            const HEAD_BODY_RATIO = (128 / 264) * 1.2;
+            // Canvas-composited body+head on a single 256×256 texture
+            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame);
+            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_pp${this.pixelPerfectEnabled}`;
+            const tex = new THREE.CanvasTexture(compositeCanvas);
+            tex.generateMipmaps = false;
+            tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+            tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.needsUpdate = true;
 
-            // Body Sprite: pivot bottom-center → bottom at y=0 in local coords
-            const bodySprite = new THREE.Sprite(bodyMat);
-            bodySprite.position.set(0, 0.5, 0);
+            const mat = new THREE.SpriteMaterial({
+              map: tex,
+              alphaTest: this.pixelPerfectEnabled ? 0.5 : 0.05,
+              transparent: true,
+              depthWrite: true,
+            });
 
-            // Head Sprite: same pixel density as body, positioned at body's neck
-            // Head's bottom (pivot) aligns with body's top (y=1.0)
-            const headSprite = new THREE.Sprite(headMat);
-            headSprite.scale.set(HEAD_BODY_RATIO, HEAD_BODY_RATIO, 1);
-            headSprite.position.set(0, 1.0 + HEAD_BODY_RATIO / 2, 0);
+            const playerSprite = new THREE.Sprite(mat);
+            playerSprite.position.set(0, 0.5, 0);
 
             this.playerGroup = new THREE.Group();
-            this.playerGroup.add(bodySprite);
-            this.playerGroup.add(headSprite);
+            this.playerGroup.add(playerSprite);
             this.playerGroup.frustumCulled = false;
             this.entityGroup.add(this.playerGroup);
             this.playerGroup.scale.set(pScale, pScale, 1);
             this.playerLastAnimFrame = pAnimFrame;
+            this.playerCompositeKey = compositeKey;
           } else if (pAnimFrame !== this.playerLastAnimFrame || this.playerNeedsTextureRefresh) {
             this.playerLastAnimFrame = pAnimFrame;
             this.playerNeedsTextureRefresh = false;
 
-            // Update texture offsets for both body and head sprites
-            const bodySprite = this.playerGroup.children[0] as THREE.Sprite | undefined;
-            const headSprite = this.playerGroup.children[1] as THREE.Sprite | undefined;
-            if (bodySprite?.material?.map) {
-              this.setSpriteSheetOffset(bodySprite.material.map as THREE.Texture, pAnimFrame, facing);
-              bodySprite.material.map.needsUpdate = true;
+            // Re-composite body+head canvas with new frame/calibration
+            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame);
+            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_pp${this.pixelPerfectEnabled}`;
+            const playerSprite = this.playerGroup.children[0] as THREE.Sprite | undefined;
+            if (playerSprite?.material) {
+              const oldTex = (playerSprite.material as THREE.SpriteMaterial).map;
+              if (oldTex) oldTex.dispose();
+              const tex = new THREE.CanvasTexture(compositeCanvas);
+              tex.generateMipmaps = false;
+              tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+              tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.needsUpdate = true;
+              (playerSprite.material as THREE.SpriteMaterial).map = tex;
+              playerSprite.material.needsUpdate = true;
             }
-            if (headSprite?.material?.map) {
-              this.setSpriteSheetOffset(headSprite.material.map as THREE.Texture, pAnimFrame, facing);
-              headSprite.material.map.needsUpdate = true;
-            }
+            this.playerCompositeKey = compositeKey;
           }
 
           const renderPx = this.snapVal(px);
@@ -2617,6 +2949,9 @@ export class Game3DRenderer {
           const aspect = this.container.clientWidth / (this.container.clientHeight || 1);
 
           this.cameraManager.update(px, py, aspect, this.pixelPerfectEnabled, (val) => this.snapVal(val));
+
+          // Update atmospheric particles around player
+          this.updateAtmosphericParticles(px, py);
 
           if (this.showDebugBounds) {
             this.updateDebugWireframes(px, py);
@@ -3151,9 +3486,6 @@ export class Game3DRenderer {
       spriteTextureMisses: this.perfStats.spriteTextureMisses,
       hpBarUpdates: this.perfStats.hpBarUpdates,
       spriteTextureCacheSize: this.spriteTextureCache.size,
-      pbrCache: { ...this.pbrGenerator.perfCounters },
-      batch: { ...this.instancingManager.perfCounters },
-      activeBatches: this.instancingManager.getBatchCount?.(),
     };
   }
 
@@ -3161,15 +3493,11 @@ export class Game3DRenderer {
     this.perfStats.spriteTextureMisses = 0;
     this.perfStats.pbrTextureMisses = 0;
     this.perfStats.hpBarUpdates = 0;
-    this.pbrGenerator.perfCounters.cacheHits = 0;
-    this.pbrGenerator.perfCounters.cacheMisses = 0;
-    this.instancingManager.perfCounters.batchCreates = 0;
-    this.instancingManager.perfCounters.batchDisposals = 0;
-    this.instancingManager.perfCounters.batchHits = 0;
   }
 
   public destroy() {
     this.isDestroyed = true;
+    activeRenderers.delete(this);
     if (this.postProcessingManager) {
       this.postProcessingManager.dispose();
     }

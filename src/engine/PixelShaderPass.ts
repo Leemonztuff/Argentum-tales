@@ -1,10 +1,13 @@
 import * as THREE from 'three';
 
-export type ShaderPresetMode = 'PIXEL_OUTLINE' | 'CEL_OUTLINE' | 'RETRO_DITHER' | 'OFF';
+export type ShaderPresetMode = 'HD2D_CINEMA' | 'PIXEL_OUTLINE' | 'CEL_OUTLINE' | 'RETRO_DITHER' | 'OFF';
 
 export interface PixelShaderConfig {
   mode: ShaderPresetMode;
   pixelSize: number;
+  tiltShiftStrength: number;
+  focalPlane: number;
+  focalBandWidth: number;
   outlineThickness: number;
   outlineIntensity: number;
   outlineColor: string;
@@ -15,43 +18,79 @@ export interface PixelShaderConfig {
   ambientWarmth: number;
   bloomIntensity: number;
   bloomThreshold: number;
+  chromaticAberration: number;
   vignetteStrength: number;
+  filmGrainStrength: number;
 }
 
 export const DEFAULT_PIXEL_SHADER_CONFIG: PixelShaderConfig = {
-  mode: 'PIXEL_OUTLINE',
-  pixelSize: 2.0,
+  mode: 'HD2D_CINEMA',
+  pixelSize: 1.0,
+  tiltShiftStrength: 0.85,
+  focalPlane: 0.44,
+  focalBandWidth: 0.30,
   outlineThickness: 1.0,
-  outlineIntensity: 0.65,
+  outlineIntensity: 0.0,
   outlineColor: '#1e293b',
-  depthSensitivity: 8.0,
-  colorSensitivity: 1.2,
+  depthSensitivity: 6.0,
+  colorSensitivity: 1.0,
   ditherStrength: 0.0,
   colorLevels: 0,
-  ambientWarmth: 0.06,
-  bloomIntensity: 0.35,
-  bloomThreshold: 0.72,
-  vignetteStrength: 0.25,
+  ambientWarmth: 0.10,
+  bloomIntensity: 0.45,
+  bloomThreshold: 0.70,
+  chromaticAberration: 0.0,
+  vignetteStrength: 0.28,
+  filmGrainStrength: 0.035,
 };
 
 export const SHADER_PRESETS: Record<ShaderPresetMode, { name: string; desc: string; config: Partial<PixelShaderConfig> }> = {
+  HD2D_CINEMA: {
+    name: 'HD-2D Cinematográfico (Estilo Octopath / Recomendado)',
+    desc: 'Resolución nativa HD con profundidad de campo Tilt-Shift (efecto diorama), bloom radiante de antorchas, sombras suaves y etéreo ambiente console-quality',
+    config: {
+      mode: 'HD2D_CINEMA',
+      pixelSize: 1.0,
+      tiltShiftStrength: 0.85,
+      focalPlane: 0.44,
+      focalBandWidth: 0.30,
+      outlineThickness: 1.0,
+      outlineIntensity: 0.0,
+      outlineColor: '#1e293b',
+      depthSensitivity: 6.0,
+      colorSensitivity: 1.0,
+      ditherStrength: 0.0,
+      colorLevels: 0,
+      ambientWarmth: 0.10,
+      bloomIntensity: 0.45,
+      bloomThreshold: 0.70,
+      chromaticAberration: 0.25,
+      vignetteStrength: 0.28,
+      filmGrainStrength: 0.035,
+    },
+  },
   PIXEL_OUTLINE: {
-    name: 'Pixel Art HD-2D (Recomendado)',
-    desc: 'Estilo HD-2D retro con pixelado nítido, resplandor bloom suave, profundización cinematográfica y colores vibrantes',
+    name: 'Pixel Art Híbrido 2.5D',
+    desc: 'Estilo pixel art con ligero tramado, viñeta y sutil delineado',
     config: {
       mode: 'PIXEL_OUTLINE',
-      pixelSize: 2.0,
+      pixelSize: 1.5,
+      tiltShiftStrength: 0.40,
+      focalPlane: 0.44,
+      focalBandWidth: 0.35,
       outlineThickness: 1.0,
-      outlineIntensity: 0.60,
+      outlineIntensity: 0.30,
       outlineColor: '#1e293b',
-      depthSensitivity: 8.0,
+      depthSensitivity: 7.0,
       colorSensitivity: 1.1,
       ditherStrength: 0.0,
       colorLevels: 0,
       ambientWarmth: 0.06,
       bloomIntensity: 0.35,
-      bloomThreshold: 0.70,
+      bloomThreshold: 0.72,
+      chromaticAberration: 0.15,
       vignetteStrength: 0.28,
+      filmGrainStrength: 0.02,
     },
   },
   CEL_OUTLINE: {
@@ -60,6 +99,9 @@ export const SHADER_PRESETS: Record<ShaderPresetMode, { name: string; desc: stri
     config: {
       mode: 'CEL_OUTLINE',
       pixelSize: 1.0,
+      tiltShiftStrength: 0.25,
+      focalPlane: 0.44,
+      focalBandWidth: 0.35,
       outlineThickness: 1.2,
       outlineIntensity: 0.75,
       outlineColor: '#0f172a',
@@ -70,7 +112,9 @@ export const SHADER_PRESETS: Record<ShaderPresetMode, { name: string; desc: stri
       ambientWarmth: 0.04,
       bloomIntensity: 0.25,
       bloomThreshold: 0.78,
+      chromaticAberration: 0.0,
       vignetteStrength: 0.20,
+      filmGrainStrength: 0.0,
     },
   },
   RETRO_DITHER: {
@@ -78,18 +122,23 @@ export const SHADER_PRESETS: Record<ShaderPresetMode, { name: string; desc: stri
     desc: 'Pixelado marcado con tramado Bayer clásico, paleta posterizada y viñeta vintage',
     config: {
       mode: 'RETRO_DITHER',
-      pixelSize: 3.0,
+      pixelSize: 2.5,
+      tiltShiftStrength: 0.0,
+      focalPlane: 0.44,
+      focalBandWidth: 0.35,
       outlineThickness: 0.8,
-      outlineIntensity: 0.55,
+      outlineIntensity: 0.45,
       outlineColor: '#1e1b4b',
       depthSensitivity: 6.0,
       colorSensitivity: 1.0,
-      ditherStrength: 0.25,
+      ditherStrength: 0.22,
       colorLevels: 20,
       ambientWarmth: 0.08,
       bloomIntensity: 0.20,
       bloomThreshold: 0.75,
+      chromaticAberration: 0.35,
       vignetteStrength: 0.35,
+      filmGrainStrength: 0.05,
     },
   },
   OFF: {
@@ -98,6 +147,9 @@ export const SHADER_PRESETS: Record<ShaderPresetMode, { name: string; desc: stri
     config: {
       mode: 'OFF',
       pixelSize: 1.0,
+      tiltShiftStrength: 0.0,
+      focalPlane: 0.44,
+      focalBandWidth: 0.35,
       outlineThickness: 0.0,
       outlineIntensity: 0.0,
       ditherStrength: 0.0,
@@ -105,7 +157,9 @@ export const SHADER_PRESETS: Record<ShaderPresetMode, { name: string; desc: stri
       ambientWarmth: 0.0,
       bloomIntensity: 0.0,
       bloomThreshold: 1.0,
+      chromaticAberration: 0.0,
       vignetteStrength: 0.0,
+      filmGrainStrength: 0.0,
     },
   },
 };
@@ -136,8 +190,13 @@ const fragmentShader = `
   uniform float uAmbientWarmth;
   uniform float uBloomIntensity;
   uniform float uBloomThreshold;
+  uniform float uChromaticAberration;
   uniform float uVignetteStrength;
-  uniform int uMode; // 0 = OFF, 1 = PIXEL_OUTLINE, 2 = CEL_OUTLINE, 3 = RETRO_DITHER
+  uniform float uTiltShiftStrength;
+  uniform float uFocalPlane;
+  uniform float uFocalBandWidth;
+  uniform float uFilmGrainStrength;
+  uniform int uMode; // 0 = OFF, 1 = HD2D_CINEMA, 2 = PIXEL_OUTLINE, 3 = CEL_OUTLINE, 4 = RETRO_DITHER
   uniform float cameraNear;
   uniform float cameraFar;
 
@@ -177,62 +236,82 @@ const fragmentShader = `
       return;
     }
 
-    // 1. Pixel Grid Coordinate Quantization
+    // 1. Pixel Grid Coordinate Quantization (only active when uPixelSize > 1.05)
     float effectivePixelSize = max(1.0, uPixelSize);
-    vec2 pixelCoord = floor(vUv * uResolution / effectivePixelSize) * effectivePixelSize;
-    vec2 quantizedUv = effectivePixelSize <= 1.05 ? vUv : (pixelCoord + 0.5 * effectivePixelSize) / uResolution;
+    vec2 quantizedUv = vUv;
+    if (effectivePixelSize > 1.05) {
+      vec2 pixelCoord = floor(vUv * uResolution / effectivePixelSize) * effectivePixelSize;
+      quantizedUv = (pixelCoord + 0.5 * effectivePixelSize) / uResolution;
+    }
 
-    vec2 texelSize = (effectivePixelSize * max(0.5, uOutlineThickness)) / uResolution;
+    // 2. Base Color Fetch with Tilt-Shift Depth of Field (Miniature Diorama Effect)
+    vec4 baseColor;
+    float focalDist = abs(quantizedUv.y - uFocalPlane);
+    float dofBlur = smoothstep(uFocalBandWidth * 0.5, 0.46, focalDist) * uTiltShiftStrength;
 
-    // 2. Base Color Fetch
-    vec4 baseColor = texture2D(tDiffuse, quantizedUv);
+    if (dofBlur > 0.01) {
+      // 9-tap progressive bokeh disc kernel
+      vec4 blurAcc = vec4(0.0);
+      float blurRadius = dofBlur * 5.2;
+      vec2 bStep = vec2(blurRadius) / uResolution;
 
-    // 3. Multi-tap Edge Detection with Adaptive Normal/Depth Threshold
-    float dCenter = linearizeDepth(texture2D(tDepth, quantizedUv).r);
-    float dTop    = linearizeDepth(texture2D(tDepth, quantizedUv + vec2(0.0, texelSize.y)).r);
-    float dBottom = linearizeDepth(texture2D(tDepth, quantizedUv - vec2(0.0, texelSize.y)).r);
-    float dLeft   = linearizeDepth(texture2D(tDepth, quantizedUv - vec2(texelSize.x, 0.0)).r);
-    float dRight  = linearizeDepth(texture2D(tDepth, quantizedUv + vec2(texelSize.x, 0.0)).r);
+      blurAcc += texture2D(tDiffuse, quantizedUv) * 0.22;
+      blurAcc += texture2D(tDiffuse, quantizedUv + vec2(0.0, bStep.y * 1.3)) * 0.12;
+      blurAcc += texture2D(tDiffuse, quantizedUv - vec2(0.0, bStep.y * 1.3)) * 0.12;
+      blurAcc += texture2D(tDiffuse, quantizedUv + vec2(bStep.x * 1.3, 0.0)) * 0.12;
+      blurAcc += texture2D(tDiffuse, quantizedUv - vec2(bStep.x * 1.3, 0.0)) * 0.12;
+      blurAcc += texture2D(tDiffuse, quantizedUv + vec2(bStep.x, bStep.y) * 1.1) * 0.075;
+      blurAcc += texture2D(tDiffuse, quantizedUv + vec2(-bStep.x, bStep.y) * 1.1) * 0.075;
+      blurAcc += texture2D(tDiffuse, quantizedUv + vec2(bStep.x, -bStep.y) * 1.1) * 0.075;
+      blurAcc += texture2D(tDiffuse, quantizedUv + vec2(-bStep.x, -bStep.y) * 1.1) * 0.075;
 
-    // Adaptive depth delta: scale with distance to avoid false positives on continuous floor planes
-    float depthScale = max(1.0, dCenter * 0.15);
-    float depthDiff = (abs(dTop - dCenter) + abs(dBottom - dCenter) + abs(dLeft - dCenter) + abs(dRight - dCenter)) / depthScale;
-    
-    // Smooth threshold for depth edge (reject tiny continuous plane slopes)
-    float depthEdge = smoothstep(0.45, 1.4, depthDiff * (uDepthSensitivity * 0.15));
-
-    // Screen-space Depth Contact Shadows (Ambient Occlusion)
-    float aoFactor = clamp(1.0 - depthDiff * 0.12 * uDepthSensitivity, 0.70, 1.0);
-
-    // 4. Color & Luminance Edge Detection (Silhouettes only)
-    vec3 cCenter = baseColor.rgb;
-    vec3 cTop    = texture2D(tDiffuse, quantizedUv + vec2(0.0, texelSize.y)).rgb;
-    vec3 cBottom = texture2D(tDiffuse, quantizedUv - vec2(0.0, texelSize.y)).rgb;
-    vec3 cLeft   = texture2D(tDiffuse, quantizedUv - vec2(texelSize.x, 0.0)).rgb;
-    vec3 cRight  = texture2D(tDiffuse, quantizedUv + vec2(texelSize.x, 0.0)).rgb;
+      baseColor = blurAcc;
+    } else {
+      baseColor = texture2D(tDiffuse, quantizedUv);
+    }
 
     vec3 lumWeights = vec3(0.299, 0.587, 0.114);
-    float lCenter = dot(cCenter, lumWeights);
-    float lTop    = dot(cTop, lumWeights);
-    float lBottom = dot(cBottom, lumWeights);
-    float lLeft   = dot(cLeft, lumWeights);
-    float lRight  = dot(cRight, lumWeights);
+    vec3 color = baseColor.rgb;
 
-    float lumDiff = (abs(lTop - lCenter) + abs(lBottom - lCenter) + abs(lLeft - lCenter) + abs(lRight - lCenter)) * 0.25;
-    float colDist = (distance(cTop, cCenter) + distance(cBottom, cCenter) + distance(cLeft, cCenter) + distance(cRight, cCenter)) * 0.25;
-    
-    float colorEdge = smoothstep(0.22, 0.55, (lumDiff * 1.2 + colDist * 1.5) * (uColorSensitivity * 0.7));
+    // 3. Multi-tap Edge Detection & Contact Shadowing (Only if enabled)
+    if (uOutlineIntensity > 0.01) {
+      vec2 texelSize = (effectivePixelSize * max(0.5, uOutlineThickness)) / uResolution;
+      float dCenter = linearizeDepth(texture2D(tDepth, quantizedUv).r);
+      float dTop    = linearizeDepth(texture2D(tDepth, quantizedUv + vec2(0.0, texelSize.y)).r);
+      float dBottom = linearizeDepth(texture2D(tDepth, quantizedUv - vec2(0.0, texelSize.y)).r);
+      float dLeft   = linearizeDepth(texture2D(tDepth, quantizedUv - vec2(texelSize.x, 0.0)).r);
+      float dRight  = linearizeDepth(texture2D(tDepth, quantizedUv + vec2(texelSize.x, 0.0)).r);
 
-    // Combined Edge Factor
-    float finalEdge = clamp(max(depthEdge, colorEdge * 0.7) * uOutlineIntensity, 0.0, 1.0);
+      float depthScale = max(1.0, dCenter * 0.15);
+      float depthDiff = (abs(dTop - dCenter) + abs(dBottom - dCenter) + abs(dLeft - dCenter) + abs(dRight - dCenter)) / depthScale;
+      float depthEdge = smoothstep(0.45, 1.4, depthDiff * (uDepthSensitivity * 0.15));
+      float aoFactor = clamp(1.0 - depthDiff * 0.12 * uDepthSensitivity, 0.70, 1.0);
 
-    vec3 color = cCenter * aoFactor;
+      vec3 cCenter = baseColor.rgb;
+      vec3 cTop    = texture2D(tDiffuse, quantizedUv + vec2(0.0, texelSize.y)).rgb;
+      vec3 cBottom = texture2D(tDiffuse, quantizedUv - vec2(0.0, texelSize.y)).rgb;
+      vec3 cLeft   = texture2D(tDiffuse, quantizedUv - vec2(texelSize.x, 0.0)).rgb;
+      vec3 cRight  = texture2D(tDiffuse, quantizedUv + vec2(texelSize.x, 0.0)).rgb;
 
-    // 5. HD-2D Bloom Glow Filter (Light Bleed for Emissive & Highlights)
+      float lCenter = dot(cCenter, lumWeights);
+      float lTop    = dot(cTop, lumWeights);
+      float lBottom = dot(cBottom, lumWeights);
+      float lLeft   = dot(cLeft, lumWeights);
+      float lRight  = dot(cRight, lumWeights);
+
+      float lumDiff = (abs(lTop - lCenter) + abs(lBottom - lCenter) + abs(lLeft - lCenter) + abs(lRight - lCenter)) * 0.25;
+      float colDist = (distance(cTop, cCenter) + distance(cBottom, cCenter) + distance(cLeft, cCenter) + distance(cRight, cCenter)) * 0.25;
+      float colorEdge = smoothstep(0.22, 0.55, (lumDiff * 1.2 + colDist * 1.5) * (uColorSensitivity * 0.7));
+
+      float finalEdge = clamp(max(depthEdge, colorEdge * 0.7) * uOutlineIntensity, 0.0, 1.0);
+      color = color * aoFactor;
+      color = mix(color, uOutlineColor, finalEdge * 0.85);
+    }
+
+    // 4. HD-2D Bloom Glow Filter (Radiant Torch & Highlight Diffusion)
     if (uBloomIntensity > 0.01) {
       vec3 bloomAcc = vec3(0.0);
-      vec2 bStep = vec2(2.5) / uResolution;
-      
+      vec2 bStep = vec2(2.6) / uResolution;
       for (int dy = -2; dy <= 2; dy++) {
         for (int dx = -2; dx <= 2; dx++) {
           vec3 sCol = texture2D(tDiffuse, quantizedUv + vec2(float(dx), float(dy)) * bStep).rgb;
@@ -245,10 +324,10 @@ const fragmentShader = `
           }
         }
       }
-      color += max(vec3(0.0), bloomAcc) * (uBloomIntensity * 0.18);
+      color += max(vec3(0.0), bloomAcc) * (uBloomIntensity * 0.22);
     }
 
-    // 6. Stylized Bayer Dithering & Color Quantization (Palette Stepping)
+    // 5. Stylized Bayer Dithering & Color Quantization (for retro presets)
     if (uDitherStrength > 0.001) {
       vec2 screenPixel = floor(vUv * uResolution / effectivePixelSize);
       float bayer = getBayerValue(screenPixel) - 0.5;
@@ -259,27 +338,43 @@ const fragmentShader = `
       color = floor(color * uColorLevels + 0.5) / uColorLevels;
     }
 
-    // 7. Apply Stylized Fantasy Outlines (Soft tint blend instead of harsh black crushing)
-    color = mix(color, uOutlineColor, finalEdge * 0.85);
-
-    // 8. Ambient Warmth & HD-2D Color Grading (Warm Highlights + Cool Shadows)
+    // 6. Filmic Color Grading & Split-Toning
     if (uAmbientWarmth > 0.001) {
-      // Warm golden highlights
-      color.r = min(1.0, color.r + uAmbientWarmth * 0.05);
-      color.g = min(1.0, color.g + uAmbientWarmth * 0.025);
-      
-      // Slight cool shadow tint for rich HD-2D depth
-      color.b = mix(color.b, color.b * 1.05 + 0.01, 1.0 - clamp(dot(color, lumWeights), 0.0, 1.0));
-      
-      // Gentle contrast curve that NEVER crushes dark values
-      color = pow(color, vec3(0.96));
+      float lum = dot(color, lumWeights);
+      vec3 highlightTint = vec3(1.05, 1.02, 0.95);
+      vec3 shadowTint = vec3(0.94, 0.98, 1.04);
+      vec3 gradedColor = mix(color * shadowTint, color * highlightTint, smoothstep(0.18, 0.82, lum));
+      gradedColor = gradedColor * gradedColor * (3.0 - 2.0 * gradedColor);
+      color = mix(color, gradedColor, clamp(uAmbientWarmth * 0.55, 0.0, 1.0));
     }
 
-    // 9. Vignette (Cinematic Corner Frame)
+    // 7. Micro Film Grain (Reduces dark gradient banding, adds cinema texture)
+    if (uFilmGrainStrength > 0.001) {
+      float noise = (fract(sin(dot(vUv * uResolution, vec2(12.9898, 78.233))) * 43758.5453) - 0.5);
+      color += noise * (uFilmGrainStrength * 0.04);
+    }
+
+    // 8. Chromatic Aberration (Optical Lens Fringe Dispersion)
+    if (uChromaticAberration > 0.001) {
+      vec2 ndc = (vUv - 0.5) * 2.0;
+      float r2 = dot(ndc, ndc);
+      vec2 caShift = ndc * r2 * (uChromaticAberration * 0.008);
+      
+      vec2 rUv = clamp(quantizedUv - caShift, 0.0, 1.0);
+      vec2 bUv = clamp(quantizedUv + caShift, 0.0, 1.0);
+      
+      float rSample = texture2D(tDiffuse, rUv).r;
+      float bSample = texture2D(tDiffuse, bUv).b;
+      
+      color.r = mix(color.r, rSample, clamp(uChromaticAberration * 1.5, 0.0, 0.95));
+      color.b = mix(color.b, bSample, clamp(uChromaticAberration * 1.5, 0.0, 0.95));
+    }
+
+    // 9. Vignette (Cinematic Framing)
     if (uVignetteStrength > 0.01) {
       vec2 uvCentered = vUv * 2.0 - 1.0;
       float dist = length(uvCentered * vec2(1.0, uResolution.y / uResolution.x));
-      float vignette = smoothstep(1.3, 0.4, dist * uVignetteStrength);
+      float vignette = smoothstep(1.35, 0.35, dist * uVignetteStrength);
       color *= mix(1.0, vignette, uVignetteStrength);
     }
 
@@ -324,7 +419,12 @@ export class PixelShaderPass {
         uAmbientWarmth: { value: this.config.ambientWarmth },
         uBloomIntensity: { value: this.config.bloomIntensity },
         uBloomThreshold: { value: this.config.bloomThreshold },
+        uChromaticAberration: { value: this.config.chromaticAberration ?? 0.0 },
         uVignetteStrength: { value: this.config.vignetteStrength },
+        uTiltShiftStrength: { value: this.config.tiltShiftStrength ?? 0.85 },
+        uFocalPlane: { value: this.config.focalPlane ?? 0.44 },
+        uFocalBandWidth: { value: this.config.focalBandWidth ?? 0.30 },
+        uFilmGrainStrength: { value: this.config.filmGrainStrength ?? 0.035 },
         uMode: { value: this.getModeIndex(this.config.mode) },
         cameraNear: { value: 0.1 },
         cameraFar: { value: 1000.0 },
@@ -341,9 +441,10 @@ export class PixelShaderPass {
   private getModeIndex(mode: ShaderPresetMode): number {
     switch (mode) {
       case 'OFF': return 0;
-      case 'PIXEL_OUTLINE': return 1;
-      case 'CEL_OUTLINE': return 2;
-      case 'RETRO_DITHER': return 3;
+      case 'HD2D_CINEMA': return 1;
+      case 'PIXEL_OUTLINE': return 2;
+      case 'CEL_OUTLINE': return 3;
+      case 'RETRO_DITHER': return 4;
       default: return 1;
     }
   }
@@ -397,7 +498,22 @@ export class PixelShaderPass {
     this.material.uniforms.uAmbientWarmth.value = this.config.ambientWarmth;
     this.material.uniforms.uBloomIntensity.value = this.config.bloomIntensity;
     this.material.uniforms.uBloomThreshold.value = this.config.bloomThreshold;
+    if (this.material.uniforms.uChromaticAberration) {
+      this.material.uniforms.uChromaticAberration.value = this.config.chromaticAberration ?? 0.0;
+    }
     this.material.uniforms.uVignetteStrength.value = this.config.vignetteStrength;
+    if (this.material.uniforms.uTiltShiftStrength) {
+      this.material.uniforms.uTiltShiftStrength.value = this.config.tiltShiftStrength ?? 0.0;
+    }
+    if (this.material.uniforms.uFocalPlane) {
+      this.material.uniforms.uFocalPlane.value = this.config.focalPlane ?? 0.44;
+    }
+    if (this.material.uniforms.uFocalBandWidth) {
+      this.material.uniforms.uFocalBandWidth.value = this.config.focalBandWidth ?? 0.30;
+    }
+    if (this.material.uniforms.uFilmGrainStrength) {
+      this.material.uniforms.uFilmGrainStrength.value = this.config.filmGrainStrength ?? 0.0;
+    }
   }
 
   public applyPreset(presetMode: ShaderPresetMode): void {
@@ -453,5 +569,3 @@ export class PixelShaderPass {
     this.material.dispose();
   }
 }
-
-

@@ -15,9 +15,6 @@ export class SpritePBRGenerator {
   private spriteMetalnessTextureCache: Map<string, THREE.Texture> = new Map();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
-  // Lightweight profiling counter
-  public perfCounters = { cacheHits: 0, cacheMisses: 0 };
-
   // Settings
   public spriteNormalEnabled: boolean = true;
   public spriteNormalStrength: number = 1.4;
@@ -27,10 +24,32 @@ export class SpritePBRGenerator {
   public pixelPerfectEnabled: boolean = false;
 
   public clearCaches(): void {
+    this.spriteTextureCache.forEach((tex) => tex.dispose());
     this.spriteTextureCache.clear();
+    this.spriteNormalTextureCache.forEach((tex) => tex.dispose());
     this.spriteNormalTextureCache.clear();
+    this.spriteRoughnessTextureCache.forEach((tex) => tex.dispose());
     this.spriteRoughnessTextureCache.clear();
+    this.spriteMetalnessTextureCache.forEach((tex) => tex.dispose());
     this.spriteMetalnessTextureCache.clear();
+  }
+
+  public evictKey(key: string): void {
+    const normal = this.spriteNormalTextureCache.get(key);
+    if (normal) {
+      normal.dispose();
+      this.spriteNormalTextureCache.delete(key);
+    }
+    const rough = this.spriteRoughnessTextureCache.get(key);
+    if (rough) {
+      rough.dispose();
+      this.spriteRoughnessTextureCache.delete(key);
+    }
+    const metal = this.spriteMetalnessTextureCache.get(key);
+    if (metal) {
+      metal.dispose();
+      this.spriteMetalnessTextureCache.delete(key);
+    }
   }
 
   public updateUniformsOnMaterials(materials: Iterable<THREE.MeshStandardMaterial>): void {
@@ -54,14 +73,12 @@ export class SpritePBRGenerator {
       this.spriteRoughnessTextureCache.has(key) &&
       this.spriteMetalnessTextureCache.has(key)
     ) {
-      this.perfCounters.cacheHits++;
       return {
         normalTexture: this.spriteNormalTextureCache.get(key)!,
         roughnessTexture: this.spriteRoughnessTextureCache.get(key)!,
         metalnessTexture: this.spriteMetalnessTextureCache.get(key)!,
       };
     }
-    this.perfCounters.cacheMisses++;
 
     const w = sourceCanvas.width;
     const h = sourceCanvas.height;

@@ -31,6 +31,12 @@ export class CameraManager {
   private tiltDirection: number = 1;
   private fovPunchIntensity: number = 0;
 
+  // Zoom management
+  private zoomFactor: number = 1.0;
+  private targetZoomFactor: number = 1.0;
+  private minZoom: number = 0.6; // Close-up action
+  private maxZoom: number = 2.5; // Tactical bird's eye view
+
   constructor(aspect: number, config?: CameraManagerConfig) {
     const fov = config?.fov ?? 30;
     this.baseFov = fov;
@@ -48,6 +54,14 @@ export class CameraManager {
 
   public getCamera(): THREE.PerspectiveCamera {
     return this.camera;
+  }
+
+  public getZoom(): number {
+    return this.zoomFactor;
+  }
+
+  public setZoom(factor: number): void {
+    this.targetZoomFactor = Math.max(this.minZoom, Math.min(this.maxZoom, factor));
   }
 
   public getLogicalPosition(): THREE.Vector3 {
@@ -134,8 +148,14 @@ export class CameraManager {
       this.logicalCameraTarget.set(playerPx, cameraTargetY, playerPy);
     }
 
-    const heightOffset = 13.5;
-    const depthOffset = aspect < 1.0 ? 11.5 : 10.5;
+    // Interpolate zoom factor for smoothness
+    this.zoomFactor += (this.targetZoomFactor - this.zoomFactor) * 0.08;
+
+    const baseHeightOffset = 13.5;
+    const baseDepthOffset = aspect < 1.0 ? 11.5 : 10.5;
+    const heightOffset = baseHeightOffset * this.zoomFactor;
+    const depthOffset = baseDepthOffset * this.zoomFactor;
+
     const targetCamPos = new THREE.Vector3(
       this.logicalCameraTarget.x,
       heightOffset,
