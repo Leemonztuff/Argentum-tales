@@ -946,6 +946,7 @@ export class Game3DRenderer {
     };
 
     this.container.addEventListener('click', handlePointerDown);
+    this.container.addEventListener('touchend', handlePointerDown, { passive: true });
   }
 
   public setOnTargetSelectedCallback(cb: (target: SelectedTarget) => void) {
