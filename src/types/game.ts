@@ -262,6 +262,8 @@ export interface FloatingText {
   text: string;
   color: string;
   size?: 'sm' | 'md' | 'lg';
+  /** Animation kind: 'dmg' (default), 'crit', 'heal', 'miss' */
+  kind?: 'dmg' | 'crit' | 'heal' | 'miss';
   created: number;
   durationMs: number;
 }
