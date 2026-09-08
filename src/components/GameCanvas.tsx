@@ -237,6 +237,7 @@ const GameCanvasBase: React.FC<GameCanvasProps> = ({
       });
 
       if (active && rendererRef.current) {
+        rendererRef.current.preloadMobAtlases();
         rendererRef.current.loadMap(currentMap);
       }
     };
