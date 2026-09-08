@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MaterialFactory } from './MaterialFactory';
 
 export enum AtlasTextureType {
   STONES_LIGHT = 'stones_light',
@@ -169,18 +170,13 @@ export class TextureAtlas {
   }
 
   public getMaterial(type: AtlasTextureType): THREE.MeshToonMaterial {
-    const mat = new THREE.MeshToonMaterial({
+    const mat = MaterialFactory.getInstance().createToonMaterial({
       map: this.texture,
-      side: THREE.DoubleSide,
-      transparent: false,
-      alphaTest: 0.5
     });
     
     // Register the material for automatic texture swaps when preloading completes
     this.materialsList.push(mat);
     
-    // We can't easily access the gradient here without passing it, 
-    // but we can at least ensure it's not transparent and has the right map.
     return mat;
   }
 }

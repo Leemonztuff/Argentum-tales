@@ -265,6 +265,8 @@ export class Game3DRenderer {
   private spriteTextureCache: Map<string, THREE.Texture> = new Map();
   /** Cache for 4-frame atlas textures keyed by "spriteUrl_facing". */
   private atlasTextureCache: Map<string, THREE.Texture> = new Map();
+  /** Cache for atlas PBR textures (normal, roughness, metalness) keyed by "spriteUrl_facing". */
+  private atlasPBRCache: Map<string, { normalTexture: THREE.Texture; roughnessTexture: THREE.Texture; metalnessTexture: THREE.Texture }> = new Map();
   public pbrGenerator: SpritePBRGenerator = new SpritePBRGenerator();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
@@ -1302,7 +1304,7 @@ export class Game3DRenderer {
   }
 
   /**
-   * Pre-generates 4-frame atlas textures for all mob sprites on the current map.
+   * Pre-generates 4-frame atlas textures + PBR maps for all mob sprites on the current map.
    * Call this after AssetLoader completes to eliminate runtime atlas generation hitches.
    * All mobs share the same spritesheet, so this generates at most 4 atlases (one per direction).
    */
@@ -1322,6 +1324,13 @@ export class Game3DRenderer {
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.needsUpdate = true;
       this.atlasTextureCache.set(cacheKey, tex);
+
+      // Generate PBR textures for atlas
+      const pbrKey = `atlas_pbr_${cacheKey}`;
+      if (!this.atlasPBRCache.has(pbrKey)) {
+        const pbr = this.pbrGenerator.generateAtlasPBRTextures(atlasCanvas, pbrKey);
+        this.atlasPBRCache.set(pbrKey, pbr);
+      }
     }
   }
 
@@ -3102,11 +3111,25 @@ export class Game3DRenderer {
           atlasTexture.colorSpace = THREE.SRGBColorSpace;
           atlasTexture.needsUpdate = true;
           this.atlasTextureCache.set(atlasCacheKey, atlasTexture);
+
+          // Generate PBR textures for runtime-created atlas
+          const pbrKey = `atlas_pbr_${atlasCacheKey}`;
+          if (!this.atlasPBRCache.has(pbrKey)) {
+            const pbr = this.pbrGenerator.generateAtlasPBRTextures(atlasCanvas, pbrKey);
+            this.atlasPBRCache.set(pbrKey, pbr);
+          }
         }
 
-        // Skip individual frame texture generation when using atlas (saves memory)
+        // Use atlas PBR textures when available, fallback to individual frame PBR
+        const atlasPBR = atlasTexture ? this.atlasPBRCache.get(`atlas_pbr_${atlasCacheKey}`) : undefined;
         const spriteTextures = atlasTexture
-          ? { texture: atlasTexture, normalTexture: undefined as any, roughnessTexture: undefined as any, metalnessTexture: undefined as any }
+          ? {
+              texture: atlasTexture,
+              normalTexture: atlasPBR?.normalTexture,
+              roughnessTexture: atlasPBR?.roughnessTexture,
+              metalnessTexture: atlasPBR?.metalnessTexture,
+              atlasFrames: 4,
+            }
           : this.getOrCreateSpriteTextures(
               mobData.sprite, mobData.glowColor, mobData.name, false,
               mobData.spriteUrl, mobData.facing, mobAnimFrame
