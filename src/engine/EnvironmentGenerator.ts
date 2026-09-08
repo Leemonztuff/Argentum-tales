@@ -8,6 +8,7 @@ import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
 import { NEW_TEXTURE_SHEETS, type CainosSheet, type SpriteCell } from '../data/newTextureManifest';
 import { VegetationAtlas } from './VegetationAtlas';
 import { VegetationBillboardSystem } from './VegetationBillboardSystem';
+import { MaterialFactory } from './MaterialFactory';
 
 // Procedural helpers
 function seededRandom(seed: number) {
@@ -204,24 +205,8 @@ function buildAllPropFamilies(): Record<PropFamily, PropFamilyVariant[]> {
 // MAIN GENERATOR
 // ---------------------------------------------------------
 
-function createToonGradient() {
-  const colors = new Uint8Array(4 * 4);
-  // 4 steps for clean, luminous fantasy lighting (no crushed dark values)
-  const levels = [115, 165, 215, 255];
-  for (let i = 0; i < 4; i++) {
-    colors[i * 4] = levels[i];
-    colors[i * 4 + 1] = levels[i];
-    colors[i * 4 + 2] = levels[i];
-    colors[i * 4 + 3] = 255;
-  }
-  const gradientMap = new THREE.DataTexture(colors, 4, 1, THREE.RGBAFormat);
-  gradientMap.needsUpdate = true;
-  gradientMap.minFilter = THREE.NearestFilter;
-  gradientMap.magFilter = THREE.NearestFilter;
-  gradientMap.generateMipmaps = false;
-  return gradientMap;
-}
-const toonGradient = createToonGradient();
+// Shared toon gradient from MaterialFactory (centralized, consistent across all materials)
+const toonGradient = MaterialFactory.getInstance().toonGradient;
 
 // ---------------------------------------------------------
 // STYLIZED FLUID MATERIAL (world-art §8)

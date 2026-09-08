@@ -353,6 +353,95 @@ export class SpritePBRGenerator {
     return { normalTexture: normalTex, roughnessTexture: roughTex, metalnessTexture: metalTex };
   }
 
+  /**
+   * Generates PBR textures for a 4-frame atlas canvas (1024x256).
+   * Processes each 256x256 frame independently and stitches results into atlas-sized PBR textures.
+   */
+  public generateAtlasPBRTextures(
+    atlasCanvas: HTMLCanvasElement,
+    key: string
+  ): { normalTexture: THREE.Texture; roughnessTexture: THREE.Texture; metalnessTexture: THREE.Texture } {
+    if (
+      this.spriteNormalTextureCache.has(key) &&
+      this.spriteRoughnessTextureCache.has(key) &&
+      this.spriteMetalnessTextureCache.has(key)
+    ) {
+      return {
+        normalTexture: this.spriteNormalTextureCache.get(key)!,
+        roughnessTexture: this.spriteRoughnessTextureCache.get(key)!,
+        metalnessTexture: this.spriteMetalnessTextureCache.get(key)!,
+      };
+    }
+
+    const frameW = 256;
+    const frameH = 256;
+    const frames = 4;
+
+    const normalCanvas = document.createElement('canvas');
+    normalCanvas.width = frameW * frames;
+    normalCanvas.height = frameH;
+    const normalCtx = normalCanvas.getContext('2d')!;
+
+    const roughCanvas = document.createElement('canvas');
+    roughCanvas.width = frameW * frames;
+    roughCanvas.height = frameH;
+    const roughCtx = roughCanvas.getContext('2d')!;
+
+    const metalCanvas = document.createElement('canvas');
+    metalCanvas.width = frameW * frames;
+    metalCanvas.height = frameH;
+    const metalCtx = metalCanvas.getContext('2d')!;
+
+    const srcCtx = atlasCanvas.getContext('2d')!;
+
+    for (let frame = 0; frame < frames; frame++) {
+      const frameCanvas = document.createElement('canvas');
+      frameCanvas.width = frameW;
+      frameCanvas.height = frameH;
+      const fCtx = frameCanvas.getContext('2d')!;
+      fCtx.drawImage(atlasCanvas, frame * frameW, 0, frameW, frameH, 0, 0, frameW, frameH);
+
+      const frameKey = `${key}_f${frame}`;
+      const result = this.generateSpriteMaterialTextures(frameCanvas, frameKey);
+
+      normalCtx.drawImage(result.normalTexture.image as HTMLCanvasElement, frame * frameW, 0);
+      roughCtx.drawImage(result.roughnessTexture.image as HTMLCanvasElement, frame * frameW, 0);
+      metalCtx.drawImage(result.metalnessTexture.image as HTMLCanvasElement, frame * frameW, 0);
+    }
+
+    const isPixelMode = this.pixelPerfectEnabled;
+
+    const normalTex = new THREE.CanvasTexture(normalCanvas);
+    normalTex.generateMipmaps = true;
+    normalTex.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+    normalTex.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
+    normalTex.wrapS = THREE.ClampToEdgeWrapping;
+    normalTex.wrapT = THREE.ClampToEdgeWrapping;
+    normalTex.needsUpdate = true;
+
+    const roughTex = new THREE.CanvasTexture(roughCanvas);
+    roughTex.generateMipmaps = true;
+    roughTex.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+    roughTex.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
+    roughTex.wrapS = THREE.ClampToEdgeWrapping;
+    roughTex.wrapT = THREE.ClampToEdgeWrapping;
+    roughTex.needsUpdate = true;
+
+    const metalTex = new THREE.CanvasTexture(metalCanvas);
+    metalTex.generateMipmaps = true;
+    metalTex.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+    metalTex.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
+    metalTex.wrapS = THREE.ClampToEdgeWrapping;
+    metalTex.wrapT = THREE.ClampToEdgeWrapping;
+    metalTex.needsUpdate = true;
+
+    this.spriteNormalTextureCache.set(key, normalTex);
+    this.spriteRoughnessTextureCache.set(key, roughTex);
+    this.spriteMetalnessTextureCache.set(key, metalTex);
+
+    return { normalTexture: normalTex, roughnessTexture: roughTex, metalnessTexture: metalTex };
+  }
+
   // --- SPRITE 2.5D PBR & CUSTOM SPECULAR SHADER FACTORY ---
   public create2DSpriteMaterial(textures: SpriteMaterialTextures): THREE.MeshStandardMaterial {
     const isPixelMode = this.pixelPerfectEnabled;
