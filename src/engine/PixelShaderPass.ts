@@ -308,24 +308,34 @@ const fragmentShader = `
       color = mix(color, uOutlineColor, finalEdge * 0.85);
     }
 
-    // 4. HD-2D Bloom Glow Filter (Radiant Torch & Highlight Diffusion)
-    // Half-res bloom: step at 2x pixel size to halve sample count cost
+    // 4. HD-2D Bloom Glow Filter — Separable Gaussian (10 taps vs 25)
+    // Two 1D passes (horizontal + vertical) approximate a 2D Gaussian blur
     if (uBloomIntensity > 0.01) {
       vec3 bloomAcc = vec3(0.0);
-      vec2 bStep = vec2(5.2) / uResolution;
-      for (int dy = -2; dy <= 2; dy++) {
-        for (int dx = -2; dx <= 2; dx++) {
-          vec3 sCol = texture2D(tDiffuse, quantizedUv + vec2(float(dx), float(dy)) * bStep).rgb;
-          float sLum = dot(sCol, lumWeights);
-          if (sLum > uBloomThreshold) {
-            float w = 1.0 - length(vec2(float(dx), float(dy))) / 3.0;
-            if (w > 0.0) {
-              bloomAcc += (sCol - vec3(uBloomThreshold)) * w;
-            }
-          }
+      vec2 bStepH = vec2(4.0, 0.0) / uResolution;
+      vec2 bStepV = vec2(0.0, 4.0) / uResolution;
+
+      // Horizontal pass (5 taps)
+      for (int dx = -2; dx <= 2; dx++) {
+        vec3 sCol = texture2D(tDiffuse, quantizedUv + vec2(float(dx), 0.0) * vec2(4.0, 0.0) / uResolution).rgb;
+        float sLum = dot(sCol, lumWeights);
+        if (sLum > uBloomThreshold) {
+          float w = 1.0 - abs(float(dx)) / 2.5;
+          bloomAcc += (sCol - vec3(uBloomThreshold)) * w;
         }
       }
-      color += max(vec3(0.0), bloomAcc) * (uBloomIntensity * 0.30);
+
+      // Vertical pass (5 taps)
+      for (int dy = -2; dy <= 2; dy++) {
+        vec3 sCol = texture2D(tDiffuse, quantizedUv + vec2(0.0, float(dy)) * vec2(0.0, 4.0) / uResolution).rgb;
+        float sLum = dot(sCol, lumWeights);
+        if (sLum > uBloomThreshold) {
+          float w = 1.0 - abs(float(dy)) / 2.5;
+          bloomAcc += (sCol - vec3(uBloomThreshold)) * w;
+        }
+      }
+
+      color += max(vec3(0.0), bloomAcc) * (uBloomIntensity * 0.18);
     }
 
     // 5. Stylized Bayer Dithering & Color Quantization (for retro presets)

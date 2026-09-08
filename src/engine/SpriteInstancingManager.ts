@@ -55,6 +55,8 @@ export class SpriteInstancingManager {
   private instancedShadowMesh: THREE.InstancedMesh;
 
   private mobInstancedBatches: Map<string, MobBatch> = new Map();
+  /** Tracks how many consecutive frames each batch has been empty. Pruned after 5. */
+  private batchEmptyFrames: Map<string, number> = new Map();
   private shadowIndex: number = 0;
   private dummyObj: THREE.Object3D = new THREE.Object3D();
 
@@ -171,15 +173,37 @@ export class SpriteInstancingManager {
   }
 
   public commitFrame(): void {
-    this.mobInstancedBatches.forEach((batch) => {
+    const keysToDelete: string[] = [];
+
+    this.mobInstancedBatches.forEach((batch, key) => {
       batch.instancedMesh.count = batch.activeCount;
       if (batch.activeCount > 0) {
         batch.instancedMesh.instanceMatrix.needsUpdate = true;
         batch.instancedMesh.visible = true;
+        this.batchEmptyFrames.delete(key);
       } else {
         batch.instancedMesh.visible = false;
+        const emptyCount = (this.batchEmptyFrames.get(key) || 0) + 1;
+        if (emptyCount >= 5) {
+          keysToDelete.push(key);
+        } else {
+          this.batchEmptyFrames.set(key, emptyCount);
+        }
       }
     });
+
+    // Prune batches that have been empty for 5+ consecutive frames
+    for (const key of keysToDelete) {
+      const batch = this.mobInstancedBatches.get(key);
+      if (batch) {
+        this.entityGroup.remove(batch.instancedMesh);
+        batch.instancedMesh.geometry.dispose();
+        (batch.material as THREE.Material).dispose();
+        batch.instancedMesh.dispose();
+        this.mobInstancedBatches.delete(key);
+        this.batchEmptyFrames.delete(key);
+      }
+    }
 
     if (this.instancedShadowMesh) {
       this.instancedShadowMesh.count = this.shadowIndex;
@@ -262,5 +286,6 @@ export class SpriteInstancingManager {
       batch.material.dispose();
     });
     this.mobInstancedBatches.clear();
+    this.batchEmptyFrames.clear();
   }
 }

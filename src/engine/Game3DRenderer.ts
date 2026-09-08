@@ -3059,18 +3059,9 @@ export class Game3DRenderer {
           mobAnimFrame = 0;
         }
 
-        const spriteTextures = this.getOrCreateSpriteTextures(
-          mobData.sprite,
-          mobData.glowColor,
-          mobData.name,
-          false,
-          mobData.spriteUrl,
-          mobData.facing,
-          mobAnimFrame
-        );
-
         // Create 4-frame atlas for batch instancing (cached per mob type + facing)
-        let atlasTexture = this.atlasTextureCache.get(`${mobData.spriteUrl || mobData.sprite}_${mobData.facing}`);
+        const atlasCacheKey = `${mobData.spriteUrl || mobData.sprite}_${mobData.facing}`;
+        let atlasTexture = this.atlasTextureCache.get(atlasCacheKey);
         if (!atlasTexture && mobData.spriteUrl) {
           const atlasCanvas = this.render4FrameAtlas(
             mobData.spriteUrl, mobData.glowColor, mobData.name, mobData.facing, false
@@ -3081,8 +3072,16 @@ export class Game3DRenderer {
           atlasTexture.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
           atlasTexture.colorSpace = THREE.SRGBColorSpace;
           atlasTexture.needsUpdate = true;
-          this.atlasTextureCache.set(`${mobData.spriteUrl}_${mobData.facing}`, atlasTexture);
+          this.atlasTextureCache.set(atlasCacheKey, atlasTexture);
         }
+
+        // Skip individual frame texture generation when using atlas (saves memory)
+        const spriteTextures = atlasTexture
+          ? { texture: atlasTexture, normalTexture: undefined as any, roughnessTexture: undefined as any, metalnessTexture: undefined as any }
+          : this.getOrCreateSpriteTextures(
+              mobData.sprite, mobData.glowColor, mobData.name, false,
+              mobData.spriteUrl, mobData.facing, mobAnimFrame
+            );
 
         const isPixelMode = this.pixelPerfectEnabled;
         const isDebug = this.showDebugBounds;
