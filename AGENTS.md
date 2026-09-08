@@ -6,7 +6,9 @@
 
 - `bun run dev` — dev server on port 3000
 - `bun run build` — production build
-- `bun run lint` — type-check only (`tsc --noEmit`). This is the only check; no test suite exists.
+- `bun run lint` — type-check only (`tsc --noEmit`)
+- `bun run test` — run all tests (`vitest run`)
+- `bun run test:watch` — run tests in watch mode
 
 ## Architecture
 
