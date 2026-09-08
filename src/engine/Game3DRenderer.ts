@@ -1283,7 +1283,7 @@ export class Game3DRenderer {
       const spriteMat = this.create2DSpriteMaterial(spriteTextures);
 
       const mesh = new THREE.Mesh(this.sharedBillboardGeometry, spriteMat);
-      mesh.frustumCulled = false;
+      mesh.frustumCulled = true;
       
       const scale = this.getPixelPerfectSpriteScale(false);
       mesh.scale.set(scale, scale, 1);
@@ -2948,7 +2948,7 @@ export class Game3DRenderer {
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(playerSprite);
-            this.playerGroup.frustumCulled = false;
+            this.playerGroup.frustumCulled = true;
             this.entityGroup.add(this.playerGroup);
             this.playerGroup.scale.set(pScale, pScale, 1);
             this.playerLastAnimFrame = pAnimFrame;
@@ -3092,7 +3092,14 @@ export class Game3DRenderer {
 
         const renderMx = this.snapVal(smoothMob.x);
         const renderMy = this.snapVal(smoothMob.y);
-        const mScale = this.getPixelPerfectSpriteScale(mobData.isBoss);
+        let mScale = this.getPixelPerfectSpriteScale(mobData.isBoss);
+
+        // LOD: reduce sprite scale for distant mobs (saves fill rate)
+        if (this.currentPlayerPos) {
+          const lodDist = Math.hypot(smoothMob.x - this.currentPlayerPos.x, smoothMob.y - this.currentPlayerPos.y);
+          if (lodDist > 8) mScale *= 0.7;
+          else if (lodDist > 5) mScale *= 0.85;
+        }
 
         this.instancingManager.addMobInstance(
           batchKey,
