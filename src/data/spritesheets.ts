@@ -32,10 +32,44 @@ export const DEFAULT_MOB_SPRITE = SPRITESHEETS.explorer;
 // the same frame index and direction row. Swap the body to change the outfit,
 // swap the head to change the hairstyle.
 export const BODY_SPRITES: Record<string, string> = {
-  humano02: '/players/Jobs/Mago_clothes01_body01.png',
+  humano02: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01.png',
+  novicio: '/players/Jobs/Nueva coleccion/Body/Priest/spritesheet_01.png',
+  guerrero: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_01.png',
+  cazador: '/players/Jobs/Nueva coleccion/Body/Arquero/spritesheet_01.png',
+  mago: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01.png',
+  picaro: '/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01.png',
 };
 
 export const HEAD_SPRITES: Record<string, string> = {
   head_humano02: '/players/Jobs/base_head_spritesheet.png',
   head_humano02_hairtyle01: '/players/Jobs/base_head_spritesheet.png',
+};
+export type PlayerAction = 'attack1' | 'attack2' | 'casting' | 'damage';
+
+export interface PlayerActionSlice {
+  url: string;
+  col: number;
+  row: number;
+  durationMs: number;
+}
+
+export const PLAYER_ACTION_SPRITES: Record<string, Partial<Record<PlayerAction, PlayerActionSlice>>> = {
+  guerrero: {
+    attack1: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 3, row: 0, durationMs: 420 },
+    attack2: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 0, row: 1, durationMs: 520 },
+    casting: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 1, row: 1, durationMs: 620 },
+    damage: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 1, row: 2, durationMs: 300 },
+  },
+  mago: {
+    attack1: { url: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png', col: 0, row: 2, durationMs: 420 },
+    attack2: { url: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png', col: 1, row: 2, durationMs: 520 },
+    casting: { url: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png', col: 2, row: 2, durationMs: 720 },
+    damage: { url: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png', col: 2, row: 1, durationMs: 300 },
+  },
+  picaro: {
+    attack1: { url: '/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01_action.png', col: 1, row: 0, durationMs: 380 },
+    attack2: { url: '/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01_action.png', col: 2, row: 0, durationMs: 480 },
+    casting: { url: '/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01_action.png', col: 0, row: 1, durationMs: 700 },
+    damage: { url: '/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01_action.png', col: 2, row: 1, durationMs: 300 },
+  },
 };

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GameMap, PlayerCharacter, ActiveMob, FloatingText, SelectedTarget, NPC } from '../types/game';
 import { MOBS } from '../data/mobs';
 import { SPRITESHEETS, CLASS_SPRITES, NPC_SPRITES, DEFAULT_MOB_SPRITE, DEFAULT_NPC_SPRITE, BODY_SPRITES, HEAD_SPRITES } from '../data/spritesheets';
+import { PLAYER_ACTION_SPRITES, PlayerAction } from '../data/spritesheets';
 import { AssetLoader } from './AssetLoader';
 import { EnvironmentGenerator } from './EnvironmentGenerator';
 import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
@@ -438,6 +439,7 @@ export class Game3DRenderer {
 
   // Player render state & distance-based footstep animation
   private playerRenderParams: {
+    classType: string;
     icon: string;
     glowColor: string;
     name: string;
@@ -450,6 +452,9 @@ export class Game3DRenderer {
   private playerCompositeKey: string = '';
   private playerWalkDistance: number = 0;
   private playerLastAnimFrame: number = -1;
+  private playerAction: { type: PlayerAction; endsAt: number } | null = null;
+  private playerActionKey: string = 'walk';
+  private playerAttackToggle: boolean = false;
 
   // Mobs render state & distance-based footstep animation
   private mobRenderParams: Map<string, {
@@ -1569,7 +1574,8 @@ export class Game3DRenderer {
     bodyUrl: string,
     headUrl: string,
     facing: 'up' | 'down' | 'left' | 'right',
-    animFrame: number
+    animFrame: number,
+    action?: PlayerAction
   ): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -1582,7 +1588,10 @@ export class Game3DRenderer {
 
     ctx.imageSmoothingEnabled = !isPixelMode;
 
-    const bodyImg = this.getOrLoadImage(bodyUrl);
+    const actionSlice = action && this.playerRenderParams
+      ? PLAYER_ACTION_SPRITES[this.playerRenderParams.classType]?.[action]
+      : undefined;
+    const bodyImg = this.getOrLoadImage(actionSlice?.url || bodyUrl);
     const headImg = this.getOrLoadImage(headUrl);
     if (!bodyImg || !headImg) return canvas;
 
@@ -1595,8 +1604,8 @@ export class Game3DRenderer {
     else if (facing === 'right') bodyRow = 2;
     else if (facing === 'up') bodyRow = 3;
 
-    const bodySx = Math.floor(bodyCol * bodyFrameW);
-    const bodySy = Math.floor(bodyRow * bodyFrameH);
+    const bodySx = actionSlice ? actionSlice.col * bodyFrameW : Math.floor(bodyCol * bodyFrameW);
+    const bodySy = actionSlice ? actionSlice.row * bodyFrameH : Math.floor(bodyRow * bodyFrameH);
 
     // Detect actual content bounds to prevent wobble from uneven cell padding
     const bodyCrop = getNonEmptyBounds(bodyImg, bodySx, bodySy, bodyFrameW, bodyFrameH);
@@ -1666,6 +1675,28 @@ export class Game3DRenderer {
     applyMagentaKeyToCanvas(canvas);
 
     return canvas;
+  }
+
+  public triggerPlayerAction(action: PlayerAction): void {
+    const slice = this.playerRenderParams && PLAYER_ACTION_SPRITES[this.playerRenderParams.classType]?.[action];
+    if (!slice) return;
+    this.playerAction = { type: action, endsAt: Date.now() + slice.durationMs };
+    this.playerNeedsTextureRefresh = true;
+  }
+
+  public triggerPlayerAttack(): void {
+    this.playerAttackToggle = !this.playerAttackToggle;
+    this.triggerPlayerAction(this.playerAttackToggle ? 'attack1' : 'attack2');
+  }
+
+  private getActivePlayerAction(): PlayerAction | undefined {
+    if (!this.playerAction) return undefined;
+    if (Date.now() >= this.playerAction.endsAt) {
+      this.playerAction = null;
+      this.playerNeedsTextureRefresh = true;
+      return undefined;
+    }
+    return this.playerAction.type;
   }
 
   // --- DYNAMIC 2.5D NORMAL & SPECULAR MAP GENERATOR (AAA HD-2D ARCHITECTURE) ---
@@ -2054,10 +2085,11 @@ export class Game3DRenderer {
     // 1. Cache Player Render Parameters
     const playerIcon = player.classType === 'guerrero' ? '🛡️🗡️' : player.classType === 'cazador' ? '🏹🧝' : player.classType === 'mago' ? '🧙‍♂️✨' : '🗡️🥷';
     const playerGlow = player.classType === 'mago' ? '#38bdf8' : player.classType === 'picaro' ? '#a855f7' : player.classType === 'guerrero' ? '#eab308' : '#22c55e';
-    const playerUrl = BODY_SPRITES.humano02 || CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
+    const playerUrl = BODY_SPRITES[player.classType] || BODY_SPRITES.humano02 || CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
     const playerHeadUrl = HEAD_SPRITES.head_humano02;
 
     const newPlayerParams = {
+      classType: player.classType,
       icon: playerIcon,
       glowColor: playerGlow,
       name: player.name,
@@ -2960,13 +2992,14 @@ export class Game3DRenderer {
           const bodyUrl = this.playerRenderParams.spriteUrl;
           const headUrl = this.playerRenderParams.headUrl;
           const facing = this.playerRenderParams.facing;
+          const activeAction = this.getActivePlayerAction();
 
           if (!this.playerGroup) {
             const pScale = this.getPixelPerfectSpriteScale(false);
 
             // Canvas-composited body+head on a single 256×256 texture
-            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame);
-            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_pp${this.pixelPerfectEnabled}`;
+            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction);
+            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
             const tex = new THREE.CanvasTexture(compositeCanvas);
             tex.generateMipmaps = true;
             tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
@@ -2996,8 +3029,8 @@ export class Game3DRenderer {
             this.playerNeedsTextureRefresh = false;
 
             // Re-composite body+head canvas with new frame/calibration
-            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame);
-            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_pp${this.pixelPerfectEnabled}`;
+            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction);
+            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
             const playerSprite = this.playerGroup.children[0] as THREE.Sprite | undefined;
             if (playerSprite?.material) {
               const oldTex = (playerSprite.material as THREE.SpriteMaterial).map;
