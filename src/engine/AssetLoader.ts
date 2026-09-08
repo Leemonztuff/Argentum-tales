@@ -1,5 +1,6 @@
 import assetManifest from './assetManifest.json';
 import { TextureAtlas } from './TextureAtlas';
+import { VegetationAtlas } from './VegetationAtlas';
 
 export interface ManifestData {
   maps: Record<string, { spritesheets: string[]; terrain: string }>;
@@ -31,7 +32,7 @@ export class AssetLoader {
     const mapConfig = manifest.maps[mapId] || { spritesheets: ['luci', 'darky', 'explorer'], terrain: 'generic' };
     const spritesheetsToLoad = mapConfig.spritesheets;
 
-    const totalSteps = spritesheetsToLoad.length + 4; // Images + Atlas + Geometry + Texture Pre-heat + Done
+    const totalSteps = spritesheetsToLoad.length + 5; // Images + Atlas + Vegetation + Geometry + Texture Pre-heat + Done
     let completedSteps = 0;
 
     const updateProgress = (completed: number, status: string) => {
@@ -83,6 +84,19 @@ export class AssetLoader {
       console.warn('Error loading TextureAtlas:', e);
       completedSteps++;
       updateProgress(completedSteps, 'Error en el Atlas, usando materiales base...');
+    }
+
+    // Phase 1.6: Precarga del atlas vegetal (árboles billboard).
+    // Sin esto, EnvironmentGenerator.buildMap() construía 0 instancias.
+    updateProgress(completedSteps, 'Despertando el bosque...');
+    try {
+      await VegetationAtlas.preloadImages();
+      completedSteps++;
+      updateProgress(completedSteps, 'Vegetación lista.');
+    } catch (e) {
+      console.warn('Error preloading VegetationAtlas:', e);
+      completedSteps++;
+      updateProgress(completedSteps, 'Sin vegetación, continuando...');
     }
 
     // Phase 2: Building Map Geometry & Collision Grid (Simulated high-perf steps for smooth updates)
