@@ -263,6 +263,8 @@ export class Game3DRenderer {
   // (hp %, orientation, anim frame) that can grow combinatorially during combat (T3).
   private readonly SPRITE_TEXTURE_CACHE_MAX = 512;
   private spriteTextureCache: Map<string, THREE.Texture> = new Map();
+  /** Cache for 4-frame atlas textures keyed by "spriteUrl_facing". */
+  private atlasTextureCache: Map<string, THREE.Texture> = new Map();
   public pbrGenerator: SpritePBRGenerator = new SpritePBRGenerator();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
@@ -1241,6 +1243,9 @@ export class Game3DRenderer {
     this.tileGroup.clear();
     this.chestMeshes.clear();
     this.gatherMeshes.clear();
+    // Dispose atlas textures to avoid GPU memory leaks across map loads
+    this.atlasTextureCache.forEach((tex) => tex.dispose());
+    this.atlasTextureCache.clear();
 
     // Clear transient VFX/telegraph/debug between maps to avoid resource leaks (R8).
     // Persistent reticle/facing indicator/alignment line are preserved.
@@ -1289,6 +1294,33 @@ export class Game3DRenderer {
       this.entityGroup.add(mesh);
       this.npcSprites.set(npc.id, mesh);
     });
+  }
+
+  // --- 4-FRAME ATLAS GENERATOR ---
+  /** Creates a horizontal 4-frame atlas canvas from a spritesheet for batch instancing. */
+  private render4FrameAtlas(
+    spriteUrl: string,
+    glowColor: string,
+    label: string | undefined,
+    facing: 'up' | 'down' | 'left' | 'right',
+    isGhost: boolean
+  ): HTMLCanvasElement {
+    const atlasWidth = 256 * 4; // 4 frames side by side
+    const atlasHeight = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = atlasWidth;
+    canvas.height = atlasHeight;
+    const ctx = canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, atlasWidth, atlasHeight);
+
+    for (let frame = 0; frame < 4; frame++) {
+      const frameCanvas = this.renderSpriteCanvas(
+        '', glowColor, label, isGhost, spriteUrl, facing, frame
+      );
+      ctx.drawImage(frameCanvas, frame * 256, 0, 256, 256);
+    }
+
+    return canvas;
   }
 
   // --- SPRITE CANVAS 2D RENDERER ---
@@ -3037,9 +3069,27 @@ export class Game3DRenderer {
           mobAnimFrame
         );
 
+        // Create 4-frame atlas for batch instancing (cached per mob type + facing)
+        let atlasTexture = this.atlasTextureCache.get(`${mobData.spriteUrl || mobData.sprite}_${mobData.facing}`);
+        if (!atlasTexture && mobData.spriteUrl) {
+          const atlasCanvas = this.render4FrameAtlas(
+            mobData.spriteUrl, mobData.glowColor, mobData.name, mobData.facing, false
+          );
+          atlasTexture = new THREE.CanvasTexture(atlasCanvas);
+          atlasTexture.generateMipmaps = true;
+          atlasTexture.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+          atlasTexture.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
+          atlasTexture.colorSpace = THREE.SRGBColorSpace;
+          atlasTexture.needsUpdate = true;
+          this.atlasTextureCache.set(`${mobData.spriteUrl}_${mobData.facing}`, atlasTexture);
+        }
+
         const isPixelMode = this.pixelPerfectEnabled;
         const isDebug = this.showDebugBounds;
-        const batchKey = `${mobData.batchBaseKey}_${mobAnimFrame}_pp${isPixelMode}_dbg${isDebug}`;
+        // Stable batch key: no animation frame, no debug flag — one batch per mob type
+        const batchKey = atlasTexture
+          ? `${mobData.batchBaseKey}_atlas_pp${isPixelMode}`
+          : `${mobData.batchBaseKey}_${mobAnimFrame}_pp${isPixelMode}_dbg${isDebug}`;
 
         const renderMx = this.snapVal(smoothMob.x);
         const renderMy = this.snapVal(smoothMob.y);
@@ -3052,12 +3102,25 @@ export class Game3DRenderer {
           renderMy,
           mScale,
           camQuat,
-          () => this.create2DSpriteMaterial(spriteTextures),
+          () => {
+            if (atlasTexture) {
+              // Create material with 4-frame atlas texture
+              const atlasTextures = { ...spriteTextures, texture: atlasTexture, atlasFrames: 4 };
+              return this.create2DSpriteMaterial(atlasTextures);
+            }
+            return this.create2DSpriteMaterial(spriteTextures);
+          },
           (mat) => {
             if (this.mobsNeedTextureRefresh) {
-              this.update2DSpriteMaterial(mat, spriteTextures);
+              if (atlasTexture) {
+                const atlasTextures = { ...spriteTextures, texture: atlasTexture, atlasFrames: 4 };
+                this.update2DSpriteMaterial(mat, atlasTextures);
+              } else {
+                this.update2DSpriteMaterial(mat, spriteTextures);
+              }
             }
-          }
+          },
+          mobAnimFrame
         );
 
         this.instancingManager.packShadowInstance(renderMx, renderMy, mobData.isBoss ? 0.75 : 0.38);
@@ -3548,6 +3611,8 @@ export class Game3DRenderer {
     this.mobHpBarTextures.clear();
     this.spriteTextureCache.forEach((tex) => tex.dispose());
     this.spriteTextureCache.clear();
+    this.atlasTextureCache.forEach((tex) => tex.dispose());
+    this.atlasTextureCache.clear();
     this.pbrGenerator.clearCaches();
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);

@@ -7,6 +7,8 @@ export interface MobBatch {
   material: THREE.MeshStandardMaterial;
   mobMap: Map<number, ActiveMob>;
   activeCount: number;
+  /** Per-instance frame index (0-3) for 4-frame atlas UV offset. */
+  frameAttribute?: THREE.InstancedBufferAttribute;
 }
 
 /**
@@ -122,19 +124,29 @@ export class SpriteInstancingManager {
     scale: number,
     cameraQuaternion: THREE.Quaternion,
     createMaterialCallback: () => THREE.MeshStandardMaterial,
-    updateMaterialCallback?: (mat: THREE.MeshStandardMaterial) => void
+    updateMaterialCallback?: (mat: THREE.MeshStandardMaterial) => void,
+    frameIndex: number = 0
   ): void {
     let batch = this.mobInstancedBatches.get(batchKey);
     if (!batch) {
       const mat = createMaterialCallback();
-      const instancedMesh = new THREE.InstancedMesh(this.sharedBillboardGeometry, mat, 256);
+      // Clone geometry to attach per-instance frame attribute
+      const geo = this.sharedBillboardGeometry.clone();
+      const frameData = new Float32Array(256).fill(0);
+      const frameAttr = new THREE.InstancedBufferAttribute(frameData, 1);
+      geo.setAttribute('aFrameIndex', frameAttr);
+
+      const instancedMesh = new THREE.InstancedMesh(geo, mat, 256);
       instancedMesh.frustumCulled = true;
+      instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
       this.entityGroup.add(instancedMesh);
       batch = {
         instancedMesh,
         material: mat,
         mobMap: new Map(),
         activeCount: 0,
+        frameAttribute: frameAttr,
       };
       this.mobInstancedBatches.set(batchKey, batch);
     } else if (updateMaterialCallback) {
@@ -150,6 +162,10 @@ export class SpriteInstancingManager {
     this.dummyObj.updateMatrix();
 
     batch.instancedMesh.setMatrixAt(idx, this.dummyObj.matrix);
+    if (batch.frameAttribute) {
+      (batch.frameAttribute.array as Float32Array)[idx] = frameIndex;
+      batch.frameAttribute.needsUpdate = true;
+    }
     batch.mobMap.set(idx, mob);
     batch.activeCount++;
   }

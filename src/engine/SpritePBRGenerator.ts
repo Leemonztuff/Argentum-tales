@@ -5,6 +5,8 @@ export interface SpriteMaterialTextures {
   normalTexture: THREE.Texture;
   roughnessTexture: THREE.Texture;
   metalnessTexture: THREE.Texture;
+  /** Number of frames in horizontal atlas (default 1 = no atlas). */
+  atlasFrames?: number;
 }
 
 export class SpritePBRGenerator {
@@ -372,11 +374,48 @@ export class SpritePBRGenerator {
     mat.userData.metalnessMap = textures.metalnessTexture;
 
     // Advanced Normal-Reactive Specular Shader Injection
+    // Also supports 4-frame atlas UV offset via aFrameIndex attribute
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uSpecularIntensity = { value: this.spriteSpecularIntensity };
       shader.uniforms.uSpecularShininess = { value: this.spriteSpecularShininess };
       shader.uniforms.uSpecularRimPower = { value: this.spriteSpecularRimPower };
+      shader.uniforms.uAtlasFrames = { value: textures.atlasFrames ?? 1.0 };
       mat.userData.shader = shader;
+
+      // Inject aFrameIndex attribute into vertex shader
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <common>',
+        `#include <common>
+        attribute float aFrameIndex;
+        varying float vFrameIndex;`
+      );
+
+      // Pass frame index to fragment shader
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        vFrameIndex = aFrameIndex;`
+      );
+
+      // Override UV transform to support 4-frame horizontal atlas
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <uv_vertex>',
+        `
+        // Atlas UV offset: select frame from 4-frame horizontal strip
+        #ifdef USE_UV
+          vec2 _atlasUv = uv;
+          float _frameIdx = aFrameIndex;
+          float _atlasFrames = uAtlasFrames;
+          if (_atlasFrames > 1.5) {
+            _atlasUv = (uv + vec2(_frameIdx, 0.0)) / vec2(_atlasFrames, 1.0);
+          }
+          vUv = (uvTransform * vec4(_atlasUv, 0.0, 1.0)).xy;
+          #ifdef USE_UV2
+            vUv2 = vUv;
+          #endif
+        #endif
+        `
+      );
 
       shader.fragmentShader = `
         uniform float uSpecularIntensity;
