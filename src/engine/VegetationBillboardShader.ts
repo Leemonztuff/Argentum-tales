@@ -50,6 +50,6 @@ export function createVegetationMaterial(atlas: VegetationAtlas): THREE.ShaderMa
     `,
     transparent: false,
     depthWrite: true,
-    side: THREE.FrontSide,
+    side: THREE.DoubleSide,
   });
 }

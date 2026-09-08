@@ -669,6 +669,18 @@ export class EnvironmentGenerator {
   private vegAtlas = new VegetationAtlas();
   private vegSystem: VegetationBillboardSystem | null = null;
 
+  /** Precarga el atlas vegetal (llamar desde AssetLoader antes de buildMap). */
+  public async ensureVegetationLoaded(): Promise<boolean> {
+    if (this.vegAtlas.isReady()) return true;
+    const ok = await this.vegAtlas.load();
+    if (!ok) console.warn('[Environment] Atlas vegetal no disponible: sin árboles billboard');
+    return ok;
+  }
+
+  public isVegetationReady(): boolean {
+    return this.vegAtlas.isReady();
+  }
+
   public updateBillboardOrientations(cameraQuaternion: THREE.Quaternion): void {
     this.vegSystem?.updateOrientations(cameraQuaternion);
   }
@@ -1051,8 +1063,13 @@ export class EnvironmentGenerator {
     // Spawn Families
     spawnFamily('wall', this.wallFamily, [this.materials.wall, this.materials.wallStoneDark, this.materials.wallStoneRound]);
 
-    // Initialize vegetation billboard system (single draw call for all foliage)
-    this.vegAtlas.loadSync();
+    // Initialize vegetation billboard system (single draw call for all foliage).
+    // El atlas debe venir precargado desde AssetLoader; loadSync() solo tiene
+    // éxito si la imagen ya está en caché compartida.
+    const vegReady = this.vegAtlas.isReady() || this.vegAtlas.loadSync();
+    if (!vegReady) {
+      console.warn('[Environment] Vegetación omitida: atlas no precargado. Ver AssetLoader.preloadMapAssets.');
+    }
     this.vegSystem = new VegetationBillboardSystem(this.vegAtlas);
 
     this.spawnBillboardDecor('tree', placements);
