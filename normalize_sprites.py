@@ -30,20 +30,54 @@ OUT_ROOT = os.path.join(ROOT, "public/players/.normalized")
 
 MAG_TOL = 60
 
+# Hojas con etiquetas/titulos incrustados ("IDLE", "OFFICIAL POSE SHEET"...).
+# El chroma-key y getNonEmptyBounds del renderer las tratan como contenido,
+# asi que normalizarlas alinea el TEXTO en vez de los pies. Se auditan pero
+# no se normalizan: hay que re-exportarlas sin texto.
+LABELED_SKIP = {
+    "public/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png",
+    "public/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01_action.png",
+}
+
 
 def is_magenta(r, g, b):
     return r > 200 and g < 80 and b > 200 and abs(r - b) < MAG_TOL
 
 
-def content_bbox(img, x0, y0, w, h):
-    """Bbox del contenido dentro de una celda (excluye magenta / transparente)."""
+def is_background(r, g, b, bg):
+    """True si el pixel es fondo (magenta key o color uniforme de la hoja)."""
+    if is_magenta(r, g, b):
+        return True
+    if bg is None:
+        return False
+    return abs(r - bg[0]) <= 40 and abs(g - bg[1]) <= 40 and abs(b - bg[2]) <= 40
+
+
+def sheet_background(im):
+    """Color de fondo muestreado en esquinas; None si no es uniforme."""
+    W, H = im.size
+    px = im.convert("RGB").load()
+    corners = [px[5, 5], px[W - 6, 5], px[5, H - 6], px[W - 6, H - 6]]
+    if all(is_magenta(*c) for c in corners):
+        return None  # magenta estandar, nada que reparar
+    r0, g0, b0 = corners[0]
+    if all(abs(c[0] - r0) <= 12 and abs(c[1] - g0) <= 12 and abs(c[2] - b0) <= 12 for c in corners):
+        return (r0, g0, b0)  # fondo uniforme no-magenta (ej. violeta) -> reparar
+    return None
+
+
+def content_bbox(img, x0, y0, w, h, bg=None):
+    """Bbox del contenido dentro de una celda (excluye fondo / transparente)."""
     crop = img.crop((x0, y0, x0 + w, y0 + h)).convert("RGBA")
+    rgb = img.crop((x0, y0, x0 + w, y0 + h)).convert("RGB")
     px = crop.load()
+    prgb = rgb.load()
     minx, miny, maxx, maxy = w, h, -1, -1
     for y in range(h):
         for x in range(w):
             r, g, b, a = px[x, y]
-            if a <= 10 or is_magenta(r, g, b):
+            br, bg_, bb_ = prgb[x, y]
+            if a <= 10 or is_background(br, bg_, bb_, bg):
                 continue
             if x < minx:
                 minx = x
@@ -60,12 +94,13 @@ def content_bbox(img, x0, y0, w, h):
 
 def audit_sheet(path, cols=4, rows=4):
     im = Image.open(path)
+    bg = sheet_background(im)
     W, H = im.size
     fw, fh = W // cols, H // rows
     frames = []
     for row in range(rows):
         for col in range(cols):
-            bb = content_bbox(im, col * fw, row * fh, fw, fh)
+            bb = content_bbox(im, col * fw, row * fh, fw, fh, bg)
             if bb is None:
                 frames.append(None)
                 continue
@@ -88,6 +123,7 @@ def audit_sheet(path, cols=4, rows=4):
         "size": [W, H],
         "mode": im.mode,
         "frame": [fw, fh],
+        "bg": ("magenta" if bg is None else f"rgb{bg} -> reparar a magenta"),
         "empty_frames": sum(1 for f in frames if f is None),
     }
     if valid:
@@ -106,8 +142,18 @@ def audit_sheet(path, cols=4, rows=4):
 
 
 def normalize_sheet(path, cols=4, rows=4):
-    """Reubica el contenido de cada celda: centro-X + pies a baseline comun."""
+    """Alinea los pies a la baseline comun SIN tocar X.
+
+    Solo eje Y: el renderer ya recentra X por frame (getNonEmptyBounds) pero
+    fija los pies en y=242 con destH variable por frame -> la cabeza "salta".
+    Coninez destH estable, la composicion body+head queda fija. Mover X
+    partia el arte que cruza bordes de celda (fragmentos flotantes).
+    """
+    rel = os.path.relpath(path, ROOT)
+    if rel in LABELED_SKIP:
+        return "labeled"
     im = Image.open(path).convert("RGB")
+    bg = sheet_background(Image.open(path))
     W, H = im.size
     fw, fh = W // cols, H // rows
     px_src = im.load()
@@ -117,7 +163,7 @@ def normalize_sheet(path, cols=4, rows=4):
     boxes = []
     for row in range(rows):
         for col in range(cols):
-            bb = content_bbox(im, col * fw, row * fh, fw, fh)
+            bb = content_bbox(im, col * fw, row * fh, fw, fh, bg)
             boxes.append(bb)
     valid = [b for b in boxes if b]
     if not valid:
@@ -129,15 +175,15 @@ def normalize_sheet(path, cols=4, rows=4):
         row, col = divmod(i, cols)
         minx, miny, maxx, maxy = bb
         cw, ch = maxx - minx + 1, maxy - miny + 1
-        dx = col * fw + (fw - cw) // 2
-        # queremos que el borde inferior quede en row*fh + baseline
-        dy = row * fh + baseline - ch + 1
+        # X intacta: solo se desplaza en Y hasta llevar los pies a la baseline.
+        # dyfe = borde inferior deseado - altura + 1 (tope: no pasar el borde).
+        dy = min(row * fh + baseline - ch + 1, row * fh + fh - ch)
         for y in range(miny, maxy + 1):
             for x in range(minx, maxx + 1):
                 r, g, b = px_src[col * fw + x, row * fh + y]
-                if is_magenta(r, g, b):
+                if is_background(r, g, b, bg):
                     continue
-                tx, ty = dx + (x - minx), dy + (y - miny)
+                tx, ty = col * fw + x, dy + (y - miny)
                 if 0 <= tx < W and 0 <= ty < H:
                     px_dst[tx, ty] = (r, g, b)
     return out
@@ -153,7 +199,7 @@ def main():
         tag = f"{rep['size'][0]}x{rep['size'][1]} {rep['mode']} frame={rep['frame'][0]}x{rep['frame'][1]}"
         if "feet_spread" in rep:
             print(
-                f"  pies±{rep['feet_spread']}px cx±{rep['cx_spread']}px vacias={rep['empty_frames']} | {tag} | {rep['file']}"
+                f"  pies±{rep['feet_spread']}px cx±{rep['cx_spread']}px vacias={rep['empty_frames']} bg={rep['bg']} | {tag} | {rep['file']}"
             )
             worst.append((rep["feet_spread"], rep["file"]))
         else:
@@ -162,6 +208,9 @@ def main():
             norm = normalize_sheet(f)
             if norm is None:
                 print("    -> sin contenido, omitida")
+                continue
+            if norm == "labeled":
+                print("    -> OMITIDA: etiquetas incrustadas (re-exportar sin texto)")
                 continue
             rel = os.path.relpath(f, os.path.join(ROOT, "public"))
             dst = os.path.join(OUT_ROOT, rel)

@@ -31,13 +31,18 @@ export const DEFAULT_MOB_SPRITE = SPRITESHEETS.explorer;
 // neckY = 0.65 * bodyHeight relative to the body's top. Both sprites share
 // the same frame index and direction row. Swap the body to change the outfit,
 // swap the head to change the hairstyle.
+//
+// Walk sheets apuntan a las copias normalizadas de normalize_sprites.py
+// (pies a baseline comun, centro estable, fondo magenta). Ver
+// public/players/.normalized/ — los originales quedan intactos.
+const NORMALIZED_BODY = '/players/.normalized/players/Jobs/Nueva coleccion/Body';
 export const BODY_SPRITES: Record<string, string> = {
-  humano02: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01.png',
-  novicio: '/players/Jobs/Nueva coleccion/Body/Priest/spritesheet_01.png',
-  guerrero: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_01.png',
-  cazador: '/players/Jobs/Nueva coleccion/Body/Arquero/spritesheet_01.png',
-  mago: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01.png',
-  picaro: '/players/Jobs/Nueva coleccion/Body/Picaro/spritesheet_01.png',
+  humano02: `${NORMALIZED_BODY}/Mago/spritesheet_01.normalized.png`,
+  novicio: `${NORMALIZED_BODY}/Priest/spritesheet_01.normalized.png`,
+  guerrero: `${NORMALIZED_BODY}/Guerrero/spritesheet_01.normalized.png`,
+  cazador: `${NORMALIZED_BODY}/Arquero/spritesheet_01.normalized.png`,
+  mago: `${NORMALIZED_BODY}/Mago/spritesheet_01.normalized.png`,
+  picaro: `${NORMALIZED_BODY}/Picaro/spritesheet_01.normalized.png`,
 };
 
 export const HEAD_SPRITES: Record<string, string> = {
@@ -55,11 +60,14 @@ export interface PlayerActionSlice {
 
 export const PLAYER_ACTION_SPRITES: Record<string, Partial<Record<PlayerAction, PlayerActionSlice>>> = {
   guerrero: {
-    attack1: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 3, row: 0, durationMs: 420 },
-    attack2: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 0, row: 1, durationMs: 520 },
-    casting: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 1, row: 1, durationMs: 620 },
-    damage: { url: '/players/Jobs/Nueva coleccion/Body/Guerrero/spritesheet_02_action.png', col: 1, row: 2, durationMs: 300 },
+    attack1: { url: `${NORMALIZED_BODY}/Guerrero/spritesheet_02_action.normalized.png`, col: 3, row: 0, durationMs: 420 },
+    attack2: { url: `${NORMALIZED_BODY}/Guerrero/spritesheet_02_action.normalized.png`, col: 0, row: 1, durationMs: 520 },
+    casting: { url: `${NORMALIZED_BODY}/Guerrero/spritesheet_02_action.normalized.png`, col: 1, row: 1, durationMs: 620 },
+    damage: { url: `${NORMALIZED_BODY}/Guerrero/spritesheet_02_action.normalized.png`, col: 1, row: 2, durationMs: 300 },
   },
+  // NOTA: Mago/Picaro action quedan en originales porque esas hojas traen
+  // etiquetas incrustadas ("IDLE", "OFFICIAL POSE SHEET") que el renderer
+  // dibujaria como parte del sprite. Re-exportar sin texto y normalizar.
   mago: {
     attack1: { url: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png', col: 0, row: 2, durationMs: 420 },
     attack2: { url: '/players/Jobs/Nueva coleccion/Body/Mago/spritesheet_01_action.png', col: 1, row: 2, durationMs: 520 },
