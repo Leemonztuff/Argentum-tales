@@ -1,5 +1,5 @@
 import React from 'react';
-import { PlayerCharacter, GameMap } from '../types/game';
+import { PlayerCharacter, GameMap, ActiveMob } from '../types/game';
 import { Backpack, Sparkles, BookOpen, Volume2, VolumeX, Shield, Swords, Flame, Footprints, HelpCircle, Database, Sliders, Magnet } from 'lucide-react';
 import { SpriteAvatar } from './SpriteAvatar';
 import { CLASS_SPRITES, SPRITESHEETS } from '../data/spritesheets';
@@ -26,6 +26,7 @@ interface HUDProps {
   comboCount?: number;
   comboTargetName?: string | null;
   comboTimeLeftPercent?: number;
+  bossMob?: ActiveMob | null;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -50,6 +51,7 @@ export const HUD: React.FC<HUDProps> = ({
   comboCount = 0,
   comboTargetName = null,
   comboTimeLeftPercent = 100,
+  bossMob = null,
 }) => {
   const hpPercent = Math.max(0, Math.min(100, (player.currentHp / player.maxHp) * 100));
   const mpPercent = Math.max(0, Math.min(100, (player.currentMp / player.maxMp) * 100));
@@ -148,6 +150,22 @@ export const HUD: React.FC<HUDProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Boss HP Bar — only visible when a boss is targeted */}
+        {bossMob && bossMob.isBoss && (
+          <div className="pointer-events-auto flex flex-col items-center hud-blur rounded-2xl px-3 sm:px-5 py-1.5 sm:py-2 shadow-2xl shadow-red-900/40 border border-red-500/30 min-w-[140px] sm:min-w-[200px]">
+            <span className="text-[10px] sm:text-xs font-bold text-red-300 font-medieval tracking-wide mb-1 truncate max-w-full">{bossMob.name}</span>
+            <div className="w-full bg-[#08080c]/90 rounded-full h-3 sm:h-3.5 border border-red-800/60 overflow-hidden relative shadow-inner">
+              <div
+                className="bg-gradient-to-r from-red-700 via-rose-500 to-red-500 h-full transition-all duration-200 health-glow"
+                style={{ width: `${Math.max(0, Math.min(100, (bossMob.currentHp / bossMob.maxHp) * 100))}%` }}
+              />
+              <span className="absolute inset-0 flex items-center justify-center text-[8px] sm:text-[9px] font-bold text-white font-pixel leading-none drop-shadow">
+                {bossMob.currentHp}/{bossMob.maxHp}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Location, Quick Potions & Nav Bar */}
         <div className="pointer-events-auto flex items-center justify-end gap-1 sm:gap-2 flex-wrap min-w-0">

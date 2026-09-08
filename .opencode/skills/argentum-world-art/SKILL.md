@@ -213,6 +213,17 @@ Avoid: unique material per object, hundreds of unique textures, excessive real-t
 
 **Optional pixel-oriented rendering**: the world may render at a lower internal resolution and upscale with nearest-neighbor while UI stays full resolution. Verify mobile readability, UI separation, character readability, camera movement and text rendering before use. Optional, not mandatory.
 
+**Known performance issues** (from AUDITORIA_AAA.md):
+
+- **Batch churn** (Critical): `batchKey` includes `name + hpPct + facing + animFrame` — each variation creates a new InstancedMesh. Empty batches are never recycled → draw calls grow during combat. Fix: group by spritesheet base, apply state via instance attributes, recycle batches.
+- **frustumCulled=false globally** (High): renderer draws everything always. Fix: reactivate frustumCulled=true.
+- **No LOD system** (High): no geometry simplification by distance, no sprite resolution reduction. Fix: LOD for geometry and sprites.
+- **Bloom brute-force** (High): 5×5 (25 taps) per pixel at full resolution. Fix: separable bloom or half-resolution.
+- **Particles as individual meshes** (Critical): each particle is a new Mesh with cloned material → individual draw calls. Fix: GPU particle system (THREE.Points).
+- **TelegraphGroup.clear() without dispose** (Critical): RingGeometry and materials leak GPU memory. Fix: pool geometries/materials, always dispose.
+- **Character texture cache combinatorial growth** (High): cache key includes hpPercent+facing+animFrame → hundreds of 256×256 canvases retained without limit. Fix: stable key + LRU cap.
+- **Dual state source** (High): renderer at 60fps vs React state updates → desynchronization risk. Fix: single state store.
+
 ### 19. Art & Technical Debt
 
 Prioritize visual work: P0 (broken rendering, unreadable gameplay, camera/world mismatch, broken materials, severe performance) → P1 (inconsistent art direction, generic assets, bad terrain transitions, poor lighting, wrong pixel density) → P2 (repetitive assets, missing props, minor texture quality, secondary decoration) → P3 (cosmetic polish). Fix structural problems before decorative details.
@@ -222,6 +233,49 @@ When a visual problem repeats across many assets, do not fix each asset individu
 Keep procedural generation maintainable with shared generators + parameters + presets + seeds + cached outputs; avoid per-asset special cases unless genuinely necessary.
 
 Do not over-engineer: inspect the existing architecture, identify the smallest correct change, reuse existing systems, avoid duplicate pipelines and unnecessary abstraction, preserve working functionality. Do not rewrite the renderer because one asset looks generic. Change strategy: CURRENT PROBLEM → VISUAL GOAL → SYSTEM AFFECTED → MINIMAL IMPLEMENTATION → GAMEPLAY CAMERA TEST → PERFORMANCE CHECK → EXPAND.
+
+### 19A. Texture Atlas (Current State)
+
+Current texture atlas: `/textures/atlas.jpg` — JPEG, 46KB, 4×2 tiles.
+
+**Issues**:
+- JPEG compression artifacts on pixel-art
+- Insufficient resolution/quality for production
+- `EnvironmentGenerator.ts` reloads the atlas via `new Image()` per tile, duplicating what `TextureAtlas.ts` already loaded as singleton
+- Minimal UV padding (0.001) risks bleeding with linear filtering
+- No mipmaps on sprites (`generateMipmaps=false`) → shimmer/aliasing at distance
+
+**Recommendation**: PNG/WebP atlas with real margin per tile (2–4px), centralized loading, NearestMipmapNearest for pixel-art sprites.
+
+### 19B. Engine Systems (Current File List)
+
+Engine files in `src/engine/`:
+
+```text
+Game3DRenderer.ts            Main renderer (3559 lines, monolithic)
+CameraManager.ts             Perspective camera, DEADZONE/HARD_FOLLOW, pixel snap, screen shake
+SpriteInstancingManager.ts   InstancedMesh batching for mobs, billboard geometry
+PostProcessingManager.ts     Wraps PixelShaderPass
+PixelShaderPass.ts           Post-processing: tilt-shift DOF, bloom, edge detection, dithering, vignette, film grain, chromatic aberration
+EnvironmentGenerator.ts      Procedural world generation: terrain, buildings, vegetation, rocks, props
+ProceduralTreeGenerator.ts   Tree geometry: 6 archetypes (FOREST/PINE/OLD/SMALL/WIDE/TALL)
+ProceduralBuildingGenerator.ts  Building generation: foundations, walls, roofs, windows, doors
+PropFamilyGenerator.ts       5 prop families: crate, barrel, bench, fence, crate_stack
+VegetationBillboardSystem.ts  Single draw call vegetation via InstancedBufferGeometry + custom ShaderMaterial
+VegetationBillboardShader.ts  Custom GLSL vertex/fragment shaders for billboarding
+VegetationAtlas.ts           Loads TX Plant textures, maps cell IDs to UV regions
+TextureAtlas.ts              Singleton atlas loader, generates MeshToonMaterial per region (8 types)
+SpritePBRGenerator.ts        Generates PBR texture sets (normal, roughness, metalness) from sprite sheets
+AssetLoader.ts               Preloads spritesheets per map with progress reporting
+GameLoop.ts                  Centralized requestAnimationFrame loop with accumulator pattern
+assetManifest.json           Maps spritesheet URLs per map (GitHub raw URLs)
+```
+
+Shader presets: HD2D_CINEMA, PIXEL_OUTLINE, CEL_OUTLINE, RETRO_DITHER, OFF.
+
+Magenta chroma-key: spritesheet JPEGs use magenta backgrounds that are made transparent at runtime.
+
+Head calibration: body+head sprite composition with adjustable offset/scale/overlap, persisted to localStorage.
 
 ### 20. Workflow
 
@@ -244,6 +298,10 @@ Do not over-engineer: inspect the existing architecture, identify the smallest c
 ### 22. Validation & Final Bar
 
 After touching world generation or renderer systems verify: build/typecheck, no broken imports, no runtime errors, assets/materials render correctly, camera view readable, characters visible, collision valid, mobile performance considered, existing world content remains compatible.
+
+Current biome configs: forest, coast, town, crypt, fire_temple, ruins, lighthouse, plains (8 total; `plains` is defined but no map uses it).
+
+Current map count: 9 maps with themes: town(2), forest(2), crypt(1), coast(1), lighthouse(1), ruins(1), fire_temple(1).
 
 A successful Argentum Tales environment feels: HANDCRAFTED, STYLIZED, MEDIEVAL, FANTASTICAL, READABLE, COHERENT, TACTICAL. It does NOT feel: procedurally-random, generic, asset-store-like, photorealistic, empty, overdetailled, visually noisy.
 

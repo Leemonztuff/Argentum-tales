@@ -321,25 +321,25 @@ export class SpritePBRGenerator {
     metalCtx.putImageData(metalImg, 0, 0);
 
     const normalTex = new THREE.CanvasTexture(normalCanvas);
-    normalTex.generateMipmaps = false;
+    normalTex.generateMipmaps = true;
     normalTex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-    normalTex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+    normalTex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
     normalTex.wrapS = THREE.ClampToEdgeWrapping;
     normalTex.wrapT = THREE.ClampToEdgeWrapping;
     normalTex.needsUpdate = true;
 
     const roughTex = new THREE.CanvasTexture(roughCanvas);
-    roughTex.generateMipmaps = false;
+    roughTex.generateMipmaps = true;
     roughTex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-    roughTex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+    roughTex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
     roughTex.wrapS = THREE.ClampToEdgeWrapping;
     roughTex.wrapT = THREE.ClampToEdgeWrapping;
     roughTex.needsUpdate = true;
 
     const metalTex = new THREE.CanvasTexture(metalCanvas);
-    metalTex.generateMipmaps = false;
+    metalTex.generateMipmaps = true;
     metalTex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-    metalTex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+    metalTex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
     metalTex.wrapS = THREE.ClampToEdgeWrapping;
     metalTex.wrapT = THREE.ClampToEdgeWrapping;
     metalTex.needsUpdate = true;

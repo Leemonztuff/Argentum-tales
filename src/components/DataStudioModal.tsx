@@ -13,6 +13,7 @@ import {
   X,
   FileCode,
 } from 'lucide-react';
+import { ItemIcon } from '../ui';
 import { contentRegistry, DataIntegrityReport } from '../services/ContentRegistry';
 import { Item, MobTemplate, Spell, Quest, CraftingRecipe } from '../types/game';
 import { ProceduralTreeGenerator, TreeType } from '../engine/ProceduralTreeGenerator';
@@ -117,7 +118,7 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
                 className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-3 flex items-start gap-3 hover:border-amber-500/50 transition-colors"
               >
                 <div className="w-10 h-10 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-xl shrink-0">
-                  {item.icon}
+                  <ItemIcon item={item} className="text-xl" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">

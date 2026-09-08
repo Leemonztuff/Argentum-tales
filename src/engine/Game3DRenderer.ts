@@ -1677,9 +1677,9 @@ export class Game3DRenderer {
     tex.offset.set(0, 0);
     tex.wrapS = THREE.ClampToEdgeWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.generateMipmaps = false;
+    tex.generateMipmaps = true;
     tex.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
-    tex.minFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+    tex.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.needsUpdate = true;
     this.setCachedSpriteTexture(key, tex);
@@ -1705,9 +1705,9 @@ export class Game3DRenderer {
       t.offset.set(0, 0);
       t.wrapS = THREE.ClampToEdgeWrapping;
       t.wrapT = THREE.ClampToEdgeWrapping;
-      t.generateMipmaps = false;
+      t.generateMipmaps = true;
       t.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
-      t.minFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+      t.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
       t.needsUpdate = true;
       this.setCachedSpriteTexture(k, t);
     }
@@ -1774,9 +1774,9 @@ export class Game3DRenderer {
       );
 
       texture = new THREE.CanvasTexture(canvas);
-      texture.generateMipmaps = false;
+      texture.generateMipmaps = true;
       texture.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
-      texture.minFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
+      texture.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -2752,9 +2752,9 @@ export class Game3DRenderer {
 
         particles.forEach((p) => {
           this.vfxGroup.remove(p.mesh);
-          p.mesh.geometry.dispose();
           (p.mesh.material as THREE.Material).dispose();
         });
+        dustGeo.dispose();
       }
     };
 
@@ -2898,9 +2898,9 @@ export class Game3DRenderer {
             const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame);
             const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_pp${this.pixelPerfectEnabled}`;
             const tex = new THREE.CanvasTexture(compositeCanvas);
-            tex.generateMipmaps = false;
+            tex.generateMipmaps = true;
             tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-            tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+            tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
             tex.colorSpace = THREE.SRGBColorSpace;
             tex.needsUpdate = true;
 
@@ -2933,9 +2933,9 @@ export class Game3DRenderer {
               const oldTex = (playerSprite.material as THREE.SpriteMaterial).map;
               if (oldTex) oldTex.dispose();
               const tex = new THREE.CanvasTexture(compositeCanvas);
-              tex.generateMipmaps = false;
+              tex.generateMipmaps = true;
               tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-              tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+              tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
               tex.colorSpace = THREE.SRGBColorSpace;
               tex.needsUpdate = true;
               (playerSprite.material as THREE.SpriteMaterial).map = tex;
@@ -3007,6 +3007,13 @@ export class Game3DRenderer {
 
         smoothMob.x += (mob.x - smoothMob.x) * 0.15;
         smoothMob.y += (mob.y - smoothMob.y) * 0.15;
+
+        // Distance-based frustum culling: skip rendering mobs beyond view distance
+        const cullDist = mobData.isBoss ? 16 : 12;
+        if (this.currentPlayerPos) {
+          const mobDistToPlayer = Math.hypot(smoothMob.x - this.currentPlayerPos.x, smoothMob.y - this.currentPlayerPos.y);
+          if (mobDistToPlayer > cullDist) return;
+        }
 
         const mobDistThisFrame = Math.hypot(smoothMob.x - prevMx, smoothMob.y - prevMy);
         let mobWalkDist = this.mobWalkDistances.get(mob.instanceId) || 0;

@@ -1218,6 +1218,56 @@ export default function App() {
           };
         }
 
+        // --- BOSS ABILITY SYSTEM ---
+        // If boss is currently telegraphing, check if telegraph window has ended
+        if (mob.state === 'telegraphing' && mob.telegraphEnd !== undefined) {
+          if (now >= mob.telegraphEnd) {
+            // Execute the ability: AoE damage if player is within radius
+            const telegraphDist = Math.hypot(mob.x - p.x, mob.y - p.y);
+            const radius = mob.telegraphRadius ?? 1;
+            if (telegraphDist <= radius + 0.5) {
+              const abilityDmg = mob.telegraphDamage ?? 20;
+              const newHp = p.currentHp - abilityDmg;
+              sound.playHitImpact();
+              rendererRef.current?.triggerScreenShake(0.5, 350);
+              addFloatingText(`-${abilityDmg} AoE`, '#f97316', p.x, p.y);
+              addLog(`${mob.name} golpea con habilidad especial por ${abilityDmg}`, 'mob_hit');
+              if (newHp <= 0) {
+                sound.playPlayerDeath();
+                const goldPenalty = Math.round(p.gold * 0.1);
+                useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
+                setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
+              } else {
+                setPlayer((prev) => (prev ? { ...prev, currentHp: newHp } : null));
+              }
+            }
+            return { ...mob, state: 'attacking', telegraphEnd: undefined, telegraphRadius: undefined, telegraphDamage: undefined };
+          }
+          // Still telegraphing — don't move or attack
+          return { ...mob, lastAgroTime: updatedLastAgroTime };
+        }
+
+        // If boss is alive and has abilities, check if any are off cooldown
+        if (mob.isBoss && template.bossAbilities && template.bossAbilities.length > 0 && hasAgro) {
+          const cooldowns = mob.abilityCooldowns ?? {};
+          for (let i = 0; i < template.bossAbilities.length; i++) {
+            const ability = template.bossAbilities[i];
+            const lastUsed = cooldowns[i] ?? 0;
+            if (now - lastUsed >= ability.cooldownMs) {
+              // Start telegraphing this ability
+              return {
+                ...mob,
+                state: 'telegraphing',
+                telegraphEnd: now + ability.telegraphMs,
+                telegraphRadius: ability.aoeRadius,
+                telegraphDamage: ability.damage,
+                abilityCooldowns: { ...cooldowns, [i]: now },
+                lastAgroTime: updatedLastAgroTime,
+              };
+            }
+          }
+        }
+
         // Chase player if in agro range or retains short-term aggro memory
         if (hasAgro && distToPlayer > 1) {
           let nextX = mob.x;
@@ -1540,6 +1590,7 @@ export default function App() {
           comboCount={comboCount}
           comboTargetName={comboTargetName}
           comboTimeLeftPercent={comboTimeLeftPercent}
+          bossMob={targetMob?.isBoss ? targetMob : null}
         />
       )}
 

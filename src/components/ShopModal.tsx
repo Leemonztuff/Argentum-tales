@@ -3,7 +3,7 @@ import { PlayerCharacter, Item } from '../types/game';
 import { ITEMS } from '../data/items';
 import { X } from 'lucide-react';
 import { contentRegistry } from '../services/ContentRegistry';
-import { Modal } from '../ui';
+import { Modal, ItemIcon } from '../ui';
 
 interface ShopModalProps {
   shopType: 'weapons' | 'potions' | 'crafting' | 'general';
@@ -105,7 +105,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="hud-blur border border-white/10 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 flex items-center justify-between gap-2.5 sm:gap-3 hover:border-amber-500/30 transition shadow-inner"
                 >
                   <div className="flex items-center gap-2.5 sm:gap-3">
-                    <span className="text-2xl sm:text-3xl p-1.5 sm:p-2 bg-slate-900/90 border border-white/10 rounded-xl">{item.icon}</span>
+                    <span className="text-2xl sm:text-3xl p-1.5 sm:p-2 bg-slate-900/90 border border-white/10 rounded-xl"><ItemIcon item={item} className="text-2xl sm:text-3xl" /></span>
                     <div>
                       <h4 className="text-[11px] sm:text-xs font-bold text-slate-100">{item.name}</h4>
                       <p className="text-[9px] sm:text-[10px] text-slate-400 line-clamp-1">{item.description}</p>
@@ -140,7 +140,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   className="hud-blur border border-white/10 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 flex items-center justify-between gap-2.5 sm:gap-3 hover:border-emerald-500/30 transition shadow-inner"
                 >
                   <div className="flex items-center gap-2.5 sm:gap-3">
-                    <span className="text-2xl sm:text-3xl p-1.5 sm:p-2 bg-slate-900/90 border border-white/10 rounded-xl">{item.icon}</span>
+                    <span className="text-2xl sm:text-3xl p-1.5 sm:p-2 bg-slate-900/90 border border-white/10 rounded-xl"><ItemIcon item={item} className="text-2xl sm:text-3xl" /></span>
                     <div>
                       <h4 className="text-[11px] sm:text-xs font-bold text-slate-100">{item.name}</h4>
                       <span className="text-[10px] sm:text-xs font-pixel font-bold text-emerald-400">

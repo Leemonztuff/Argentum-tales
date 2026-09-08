@@ -227,7 +227,9 @@ Avoid making range differences meaningless.
 
 Attacks use weapon-specific intervals modified by class and agility.
 
-The current system calculates a minimum attack interval and derives it from weapon speed, class modifiers and agility. 
+The current system calculates: `baseInterval * classMult - agilityReduction`, minimum 600ms.
+
+Class multipliers: picaro 0.85, guerrero 1.0, cazador 1.1, mago 1.25.
 
 Attack speed should represent:
 
@@ -309,16 +311,20 @@ Damage should be composed from understandable sources:
 ```text
 base weapon damage
 +
-relevant stat contribution
+relevant stat contribution (fuerza/4 or agilidad/4)
 +
-class contribution
+class contribution (weaponType-specific bonus)
 +
 skill/effect modifiers
 -
-effective defense
+effective defense (flat subtraction, min 1)
 ```
 
-Current physical combat already follows this general structure. 
+Current physical combat already follows this general structure.
+
+Accuracy/evasion determines hit chance: `punteria / (punteria + evasion)`, clamped [5%, 95%].
+
+Critical hits: general chance `0.08 + agilidad * 0.005`, multiplier 1.5x. Stab critical: chance `1.6 + apunalar.level * 0.01`, ignores 50% mob defense.
 
 Do not create arbitrary damage formulas without a design reason.
 
@@ -381,10 +387,9 @@ Critical hits are high-impact events.
 
 Current combat contains:
 
-- general critical hits
-- agility influence
-- critical damage multiplier
-- specialized stabbing criticals
+- general critical hits: chance `0.08 + agilidad * 0.005`, multiplier 1.5x
+- specialized stabbing criticals: chance scales with apunalar level, multiplier `1.6 + apunalar.level * 0.01`, ignores 50% mob defense
+- mob criticals: 12% normal mobs, 20% bosses, 1.5x multiplier
 
 
 
@@ -442,19 +447,24 @@ Do not make ranged combat simply "melee from farther away."
 
 Magic should provide a distinct tactical toolkit.
 
-Current spell data supports:
+Current spell data supports 12 spells:
 
-- damage
-- healing
-- buffs
-- AoE
-- mana cost
-- range
-- cooldown
-- minimum skill level
-- different spell animations
+```text
+dardo_magico        damage   6-11    8 mana   range 4   skill 1   animation: ice
+curacion_leve       heal    25-40   14 mana   range 0   skill 10  animation: holy
+misil_fuego         damage  14-24   18 mana   range 5   skill 25  animation: fire
+escudo_magico       heal    30-55   25 mana   range 0   skill 30  animation: holy
+grito_guerra        heal    20-35   15 mana   range 0   skill 15  animation: holy
+golpe_sismico       damage  35-65   20 mana   range 2   skill 35  animation: fire
+lluvia_flechas      damage  30-60   22 mana   range 5   skill 35  animation: lightning
+trampa_cazador      damage  25-45   18 mana   range 4   skill 20  animation: ice
+golpe_fantasma      damage  45-85   25 mana   range 1   skill 40  animation: dark
+humo_cegador        damage  20-40   15 mana   range 3   skill 20  animation: dark
+descarga_electrica  damage  22-38   28 mana   range 5   skill 45  animation: lightning
+apocalipsis         damage  50-85   55 mana   range 6   skill 70  animation: dark (segundo job only, unlocked by grimorio)
+```
 
-
+Spell types in code: `damage`, `heal`, `buff`, `aoe`. Note: no buff-type spells actually exist — all support spells use `type: 'heal'`. The `buff` type is in the union but unused.
 
 Magic should trade some combination of:
 
@@ -481,6 +491,8 @@ What is the counterplay?
 ```
 
 Avoid adding spells merely because a class "needs more abilities."
+
+Note: Spells are executed inline in `App.tsx`, not via a dedicated spell-casting service in CombatEngine. All spells are available to all classes.
 
 ---
 
@@ -564,6 +576,8 @@ attacking
 returning
 telegraphing
 ```
+
+State transitions are implemented in `App.tsx` (AI interval), not in a dedicated service. The `ActiveMob` type in `game.ts` tracks `state` and `stateTimer`.
 
 
 
@@ -671,6 +685,7 @@ Conceptual identities:
 - shield
 - reliable physical combat
 - sustained pressure
+- **combat bonuses**: attack interval ×1.0, shield block +15 classBonus, punteria mod 10
 
 ### Cazador
 
@@ -679,6 +694,7 @@ Conceptual identities:
 - positioning
 - ranged pressure
 - traps
+- **combat bonuses**: attack interval ×1.1, evasion +12, punteria mod 12, +4 classBonus ranged
 
 ### Mago
 
@@ -687,6 +703,7 @@ Conceptual identities:
 - ranged abilities
 - utility
 - high-impact spells
+- **combat bonuses**: attack interval ×1.25, punteria mod 4
 
 ### Picaro
 
@@ -696,6 +713,7 @@ Conceptual identities:
 - stabbing
 - evasion
 - opportunistic combat
+- **combat bonuses**: attack interval ×0.85, evasion +10, punteria mod 8, stab critical with apunalar
 
 ### Novicio
 
@@ -703,8 +721,11 @@ Conceptual identities:
 - progression
 - foundational mechanics
 - transition into specialized identity
+- **combat bonuses**: base values (punteria mod 4)
 
 These are design directions, not excuses to hard-code every future mechanic.
+
+**Note**: All 12 spells are available to all classes via `knownSpells` — there is no class-specific spell restriction in the current implementation. Class identity comes from combat bonuses, not spell access.
 
 ---
 
@@ -720,7 +741,13 @@ constitucion
 carisma
 ```
 
+Stat effects in code:
 
+- `fuerza`: melee damage contribution (fuerza/4)
+- `agilidad`: ranged damage contribution (agilidad/4), attack speed reduction, critical chance, evasion (agilidad/3)
+- `inteligencia`: spell damage, mana pool
+- `constitucion`: HP pool
+- `carisma`: shop prices, quest rewards (economic modifier)
 
 Each stat must have a clear gameplay purpose.
 
@@ -744,20 +771,20 @@ Does it stack too efficiently?
 
 # 31. SKILLS
 
-Current skill families include:
+Current skill families include 8 skills:
 
 ```text
-tacticas_combate
-combate_armas
-combate_distancia
-combate_sin_armas
-defensa_escudos
-apunalar
-evasion
-magia
+tacticas_combate     combat tactics, accuracy, evasion contributions
+combate_armas        melee weapon combat
+combate_distancia    ranged weapon combat
+combate_sin_armas    unarmed combat
+defensa_escudos      shield block, defense
+apunalar             stabbing, critical attacks (picaro)
+evasion              dodge, avoidance
+magia                spell casting, magic damage
 ```
 
-
+Default starting levels (all classes): tacticas_combate 10, combate_armas 10, combate_distancia 5, combate_sin_armas 5, defensa_escudos 8, apunalar 5, evasion 8, magia 5.
 
 Skills are part of character identity and progression.
 
@@ -815,7 +842,11 @@ amulet
 arrows
 ```
 
+Current item count: 35 items across 11 types (weapon, shield, helmet, armor, boots, ring, amulet, potion, arrow, material, quest).
 
+Item properties: statsBonus (Partial<PlayerStats>), hpRestore, mpRestore, buffType/buffDurationSec.
+
+Note: `Item.rarity` field exists in the type (comun/poco_comun/raro/epico/legendario) but **no items currently define it** — the rarity system is planned but not implemented. `Chest.requiresKey` exists in the type but no chests use it.
 
 Equipment should modify playstyle, not only increase item level.
 
@@ -903,16 +934,27 @@ Consumables should interact with:
 
 # 39. CRAFTING
 
-Current crafting supports:
+Current crafting supports 10 recipes across 2 stations:
 
-- smith
-- alchemy
-- recipes
-- ingredients
-- gold costs
-- difficulty tiers
-- skill types
-- unlockable books
+```text
+Station: smith (herreria)
+  craft_flechas          flechas x30          difficulty 5   tier basica
+  craft_espada_corta     espada_corta         difficulty 10  tier basica
+  craft_escudo_hierro    escudo_hierro        difficulty 20  tier basica
+  craft_espada_larga     espada_larga         difficulty 30  tier intermedia
+  craft_hacha_barbara    hacha_barbara        difficulty 35  tier intermedia
+  craft_cota_malla       cota_malla           difficulty 25  tier intermedia
+  craft_armadura_placas  armadura_placas      difficulty 50  tier avanzada
+
+Station: alchemy (alquimia)
+  craft_pocion_roja      pocion_roja x3       difficulty 5   tier basica
+  craft_pocion_azul      pocion_azul x2       difficulty 10  tier basica
+  craft_elixir_fuerza    elixir_fuerza        difficulty 25  tier intermedia
+```
+
+Features: ingredients, gold costs, difficulty tiers (basica/intermedia/avanzada), skill types (herreria/alquimia).
+
+Note: `requiredBookId` field exists in CraftingRecipe type but **no recipe uses it** — planned for unlockable recipes. `skillType: 'cocina'` exists in the type union but has no recipes or implementation.
 
 
 
@@ -924,20 +966,27 @@ It should not become mandatory menu maintenance.
 
 # 40. EXPLORATION
 
-The world contains:
+The world contains 9 maps:
 
-- towns
-- forests
-- crypts
-- coast
-- lighthouse
-- ruins
-- fire temple
-- portals
-- chests
-- NPCs
-- gathering nodes
-- enemy spawns
+```text
+mapa_novicio       Campo de Novicios      theme: town       safe: no
+pueblo_inicial     Villa de Ullathorpe    theme: town       safe: yes
+bosque_01          Bosque de los Lobos    theme: forest     safe: no
+bosque_02          Bosque Profundo        theme: forest     safe: no
+dungeon_cripta     Dungeon Cripta         theme: crypt      safe: no  dungeon: yes
+costa_01           Costa de las Sirenas   theme: coast      safe: no
+dungeon_faro       Faro Olvidado          theme: lighthouse safe: no  dungeon: yes
+ruinas_final       Ruinas de Arandor      theme: ruins      safe: no
+dungeon_final      Templo del Caos        theme: fire_temple safe: no dungeon: yes
+```
+
+Features per map: tiles (9 types), portals, chests, gatherNodes (tree/ore/herb), npcs (dialogue, shopType, quest giving, job promotion), mobSpawns.
+
+Tile types: ground(0), wall(1), water(2), stone(3), wood(4), dense_tree(5), big_rock(6), void(7), dirt_path(8).
+
+Note: 8 biome configs exist in environmentConfig.ts but `plains` biome has no map using it.
+
+Exploration should provide reasons to move through the world.
 
 
 
@@ -1020,7 +1069,9 @@ clear_dungeon
 talk
 ```
 
+Current quest count: 12 quests. 11 use `kill` objective, 1 uses `gather`. The `clear_dungeon` and `talk` objective types exist in the Quest interface but **no quests currently use them**.
 
+Quest types include: tutorial (quest_novicio_entrenamiento), class job trials (4 quests for guerrero/cazador/mago/asesino), main story (5 quests progressing through maps), second job mastery (quest_segundo_job_maestria), and side quests (quest_side_hierro — gathering).
 
 Quests should reinforce exploration and world context.
 
@@ -1265,6 +1316,11 @@ The renderer currently uses:
 - pixel shader/post-processing
 - pixel snapping
 - perspective camera
+- GameLoop (requestAnimationFrame with accumulator pattern)
+- 5 shader presets (HD2D_CINEMA, PIXEL_OUTLINE, CEL_OUTLINE, RETRO_DITHER, OFF)
+- VegetationBillboardSystem (single draw call, InstancedBufferGeometry + custom ShaderMaterial)
+- Magenta chroma-key for sprite transparency
+- Head calibration system for body+head sprite composition
 
 
 
@@ -1414,6 +1470,8 @@ VISUAL OUTPUT
 
 Do not bury gameplay rules inside rendering code.
 
+**Current state**: The renderer runs at 60fps via `requestAnimationFrame` and interpolates positions (lerp), while mob AI runs via `setInterval` in `App.tsx`. React state propagates to the renderer via `updateEntities` in `GameCanvas.tsx`. This dual-source architecture is a known structural issue — renderer reads from one cadence while React updates at another.
+
 ---
 
 # 63. PERFORMANCE
@@ -1431,17 +1489,154 @@ Prioritize:
 
 Current architecture already includes dedicated managers for:
 
-- camera
-- sprite instancing
-- post-processing
-- assets
-- environment
-- texture atlas
-- sprite materials
+- CameraManager
+- SpriteInstancingManager
+- PostProcessingManager
+- AssetLoader
+- EnvironmentGenerator
+- TextureAtlas
+- SpritePBRGenerator
+- GameLoop
+- VegetationBillboardSystem
+- ProceduralTreeGenerator
+- ProceduralBuildingGenerator
+- PropFamilyGenerator
+- ContentRegistry (singleton data registry with integrity validation)
 
 
 
 Preserve modularity.
+
+---
+
+# 63A. DAY/NIGHT CYCLE
+
+A real-time day/night cycle exists via `useDayNightCycle.ts`.
+
+The system tracks:
+
+- `timeProgress` (0.0 to 1.0)
+- `isNight` flag
+- Renderer syncs lighting to cycle state
+
+The cycle affects ambient light, fog color, and shadow color. The cycle is continuous and tied to gameplay time.
+
+---
+
+# 63B. COMBO SYSTEM
+
+A short combo window exists via `useCombatCounters.ts`.
+
+Features:
+
+- 3-second combo window against the same mob
+- Combo count tracking
+- Time-left percentage for UI display
+- Simple counter (not a complex chain system)
+
+The combo system rewards sustained pressure on a single target.
+
+---
+
+# 63C. DASH SYSTEM
+
+A dodge/dash ability exists with 2500ms cooldown.
+
+The dash is a short-range positioning tool. It is bound to the dash input on both mobile and desktop.
+
+---
+
+# 63D. STEALTH
+
+PlayerCharacter supports:
+
+- `isStealthed` boolean
+- `stealthDurationMs` duration tracking
+
+The picaro class can trigger invisibility via buff effects. There is no dedicated stealth service — stealth state is tracked on the player character and checked by mob AI.
+
+---
+
+# 63E. JOB SYSTEM
+
+Character progression includes a job promotion system:
+
+```text
+jobStage: 'novicio' | 'primer_job' | 'segundo_job'
+```
+
+The job promotion system works through:
+
+- Class-specific trial quests (quest_job_guerrero, quest_job_cazador, quest_job_mago, quest_job_asesino)
+- Job instructors in pueblo_inicial (4 NPCs)
+- Second job unlocked via quest_segundo_job_maestria (kill golem_antiguo x2)
+- Second job grants access to powerful spells (e.g., apocalipsis via grimorio)
+
+---
+
+# 63F. CHARACTER SLOTS
+
+The game supports 3 character save slots:
+
+- localStorage persistence
+- Active slot tracking
+- Switch between characters without full restart
+
+---
+
+# 63G. AUTO-PICKUP
+
+Automatic item pickup with configurable type filters:
+
+- Gold
+- Consumables
+- Materials
+- Equipment
+- Quest items
+
+Filters are configurable per-player via game settings.
+
+---
+
+# 63H. GAME SETTINGS
+
+Player-configurable settings include:
+
+- Auto-pickup type filters
+- Critical hit screen shake toggle
+- Loot toast notification toggle
+- Auto-align to grid
+- Sound mute
+
+Settings managed via `useGameSettings.ts` and UIStore.
+
+---
+
+# 63I. SOUND SERVICE
+
+Sound effects are synthesized via Web Audio API (`src/services/sound.ts`).
+
+Sound categories include: sword swing, hit impact, spell cast, potion drink, level up, critical hit, death.
+
+No external audio files — all sounds are generated programmatically.
+
+---
+
+# 63J. CONTENT REGISTRY
+
+A singleton ContentRegistry (`src/services/ContentRegistry.ts`) provides:
+
+- Centralized access to items, mobs, spells, quests, recipes, maps
+- Content integrity validation
+- Content package import capability
+
+---
+
+# 63K. STAMINA (PLACEHOLDER)
+
+PlayerCharacter includes `currentStamina` and `maxStamina` fields.
+
+These fields exist in the type definition but **no stamina system is implemented** — no consumption, no regeneration, no gameplay effect. This is dead/planned data.
 
 ---
 
@@ -1979,6 +2174,8 @@ Do not replace readable 2D/2.5D gameplay with unnecessary 3D complexity.
 Do not add systems simply because they are technically possible.
 
 Build outward from the existing foundation.
+
+**Content language**: all game content (item names, quest titles, mob names, map names, dialogue, skill names) is in **Spanish**. Preserve Spanish when adding or modifying game data.
 
 **Argentum Tales should become deeper as it grows — not merely larger.**
 

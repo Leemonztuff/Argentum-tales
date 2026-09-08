@@ -12,4 +12,5 @@ export type {
 } from './store/UIStore';
 export { Modal } from './components/Modal';
 export type { ModalProps } from './components/Modal';
+export { ItemIcon } from './components/ItemIcon';
 export { colors } from './tokens';

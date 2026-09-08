@@ -83,7 +83,7 @@ Use this priority:
 ```text
 Gameplay functionality
 → Architecture
-→ UI Bible
+→ UI Bible (design tokens in src/ui/tokens/colors.ts)
 → Mobile usability
 → Desktop usability
 → Accessibility
@@ -329,7 +329,7 @@ Check that every combat action communicates:
 
 Preserve existing keyboard behavior unless explicitly asked to change it.
 
-Known mappings may include:
+Known gameplay shortcuts:
 
 ```text
 WASD       movement
@@ -487,6 +487,14 @@ Search for repeated:
 If the same pattern is implemented differently, prefer consolidation when practical.
 
 Do not abstract trivial differences.
+
+### Design Tokens
+
+`src/ui/tokens/colors.ts` is the single source of truth for the color palette. All UI components should consume tokens from this file. Hardcoded hex values in components indicate tech debt.
+
+### State Management
+
+Zustand UIStore (`src/ui/store/UIStore.ts`) manages UI state (modals, active overlays). Check that new UI integrates with the store pattern rather than introducing parallel state.
 
 ---
 
@@ -721,7 +729,7 @@ Input/gameplay issue
 After modifying UI, verify:
 
 ```text
-□ TypeScript/build
+□ TypeScript/build (bun run lint → tsc --noEmit)
 □ affected components
 □ imports
 □ callbacks
@@ -732,6 +740,7 @@ After modifying UI, verify:
 □ z-index
 □ animation
 □ visual consistency
+□ design tokens consumed from src/ui/tokens/colors.ts
 ```
 
 Compilation success does not equal UX success.
@@ -742,12 +751,10 @@ Compilation success does not equal UX success.
 
 Use existing project scripts when available.
 
-Examples:
-
 ```text
-npm run build
-npm run typecheck
-npm run lint
+bun run dev       — dev server on port 3000
+bun run build     — production build
+bun run lint      — type-check only (tsc --noEmit). This is the only check; no test suite exists.
 ```
 
 Only run commands that actually exist.
@@ -767,6 +774,15 @@ What else consumes this?
 Inspect affected consumers.
 
 Never fix one screen by silently breaking another.
+
+### Component Consumers
+
+22 UI components exist. Key shared components to watch:
+
+- `Modal.tsx` — used by 10+ modals (inventory, skills, quests, shop, crafting, dialogue, class select, death, help, settings, data studio)
+- `HUD.tsx` — consumed by GameCanvas, affects HP/MP bars, target, skills
+- `MobileControls.tsx` — input layer, affects movement, attack, dash, potions
+- `src/ui/tokens/colors.ts` — color tokens consumed by all UI components
 
 ---
 
