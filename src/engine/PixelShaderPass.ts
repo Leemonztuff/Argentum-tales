@@ -309,9 +309,10 @@ const fragmentShader = `
     }
 
     // 4. HD-2D Bloom Glow Filter (Radiant Torch & Highlight Diffusion)
+    // Half-res bloom: step at 2x pixel size to halve sample count cost
     if (uBloomIntensity > 0.01) {
       vec3 bloomAcc = vec3(0.0);
-      vec2 bStep = vec2(2.6) / uResolution;
+      vec2 bStep = vec2(5.2) / uResolution;
       for (int dy = -2; dy <= 2; dy++) {
         for (int dx = -2; dx <= 2; dx++) {
           vec3 sCol = texture2D(tDiffuse, quantizedUv + vec2(float(dx), float(dy)) * bStep).rgb;
@@ -324,7 +325,7 @@ const fragmentShader = `
           }
         }
       }
-      color += max(vec3(0.0), bloomAcc) * (uBloomIntensity * 0.22);
+      color += max(vec3(0.0), bloomAcc) * (uBloomIntensity * 0.30);
     }
 
     // 5. Stylized Bayer Dithering & Color Quantization (for retro presets)

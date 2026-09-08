@@ -48,6 +48,8 @@ export interface Item {
   description: string;
   type: ItemType;
   icon: string;
+  /** Optional PNG icon path (e.g. '/icons/shield_steel.png'). When set, renders as <img> instead of emoji. */
+  iconPath?: string;
   price: number;
   sellPrice: number;
   stackable?: boolean;
@@ -168,7 +170,10 @@ export interface ActiveMob {
   state: 'idle' | 'chasing' | 'attacking' | 'returning' | 'telegraphing';
   telegraphEnd?: number;
   telegraphRadius?: number;
+  telegraphDamage?: number;
   lastAgroTime?: number;
+  /** Timestamp when each boss ability was last executed (indexed by ability index). */
+  abilityCooldowns?: Record<number, number>;
 }
 
 export interface NPC {

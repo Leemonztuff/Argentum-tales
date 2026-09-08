@@ -4,7 +4,7 @@ import { CRAFTING_RECIPES } from '../data/crafting';
 import { ITEMS } from '../data/items';
 import { contentRegistry } from '../services/ContentRegistry';
 import { Hammer } from 'lucide-react';
-import { Modal } from '../ui';
+import { Modal, ItemIcon } from '../ui';
 
 interface CraftingModalProps {
   station: 'smith' | 'alchemy';
@@ -62,7 +62,7 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
             >
               <div className="flex items-start gap-2.5 sm:gap-3">
                 <span className="text-2xl sm:text-3xl p-1.5 sm:p-2 bg-slate-900/90 border border-white/10 rounded-xl">
-                  {outputItem.icon}
+                  {outputItem && <ItemIcon item={outputItem} className="text-2xl sm:text-3xl" />}
                 </span>
                 <div className="flex-1">
                   <div className="flex items-center justify-between gap-1">
@@ -99,7 +99,7 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
                   return (
                     <div key={ing.itemId} className="flex items-center justify-between text-slate-300">
                       <span className="flex items-center gap-1">
-                        {ingItem?.icon} {ingItem?.name}
+                        {ingItem && <ItemIcon item={ingItem} size="w-4 h-4" />} {ingItem?.name}
                       </span>
                       <span className={`font-pixel font-bold ${isEnough ? 'text-emerald-400' : 'text-red-400'}`}>
                         {currentCount} / {ing.count}

@@ -107,6 +107,15 @@ Disabled    #55524D
 Important   #D7B45A
 ```
 
+### Borders
+
+```text
+Subtle      rgba(229,224,214,0.08)
+Divider     rgba(229,224,214,0.06)
+```
+
+These colors are implemented in `src/ui/tokens/colors.ts` as the single source of truth. All UI components should consume tokens from this file rather than hardcoding hex values.
+
 Avoid pure black/white as default UI colors.
 
 Do not use color as the only state indicator.
@@ -902,6 +911,24 @@ Every-frame UI work requires special scrutiny.
 
 Do not introduce dependencies for trivial visual effects.
 
+### Shader Presets
+
+The post-processing system (`PixelShaderPass.ts`) offers 5 presets:
+
+```text
+HD2D_CINEMA       Full HD-2D look: tilt-shift DOF, bloom, edge detection, dithering, vignette, film grain, chromatic aberration
+PIXEL_OUTLINE     Pixel-art outline emphasis
+CEL_OUTLINE       Cel-shading outline
+RETRO_DITHER      Retro dithering effect
+OFF               No post-processing
+```
+
+Presets are selectable via settings. Default is HD2D_CINEMA.
+
+### Head Calibration
+
+Body+head sprite composition uses adjustable offset/scale/overlap parameters, persisted to localStorage. The `HeadCalibrationUI` is a developer tool for calibrating sprite composition — not a player-facing feature.
+
 ---
 
 # 43. ARCHITECTURE
@@ -920,6 +947,29 @@ Reuse existing components and patterns.
 Do not duplicate UI systems unnecessarily.
 
 Do not move gameplay calculations into presentation code merely for convenience.
+
+### State Management
+
+UI state is managed via Zustand (`src/ui/store/UIStore.ts`) with persist middleware. Tracked modals: inventory, skills, quests, help, dataStudio, settings, headCalibration.
+
+Additional contextual overlays (shop, crafting, dialogue, death) are managed by separate state in `App.tsx`, not via UIStore.
+
+### Shared Components
+
+- `Modal.tsx` — shared modal wrapper with accent/border tokens, backdrop overlay, close button
+- `HUD.tsx` — main HUD with HP/MP bars, target info, skill slots, potion buttons
+- `MobileControls.tsx` — virtual joystick + combat buttons
+- `Minimap.tsx` — canvas-based minimap
+- `VerticalSkillBar.tsx` — vertical spell bar for equipped spells
+- `ToastNotification.tsx` — animated toast notifications for loot/events
+- `SpriteAvatar.tsx` — renders player sprite to canvas for UI display
+- `CombatLog.tsx` — scrolling combat message log
+
+### Developer Tools (not player-facing)
+
+- `DataStudioModal.tsx` — debug data viewer
+- `HeadCalibrationUI.tsx` — head/body sprite calibration sliders
+- These should be hidden behind flags in release builds.
 
 ---
 
@@ -955,6 +1005,20 @@ Does it introduce visual noise?
 ```
 
 If it does not provide sufficient value, do not add it.
+
+### Existing Component Inventory
+
+22 UI components exist in `src/components/`:
+
+**HUD**: HUD.tsx, Minimap.tsx, VerticalSkillBar.tsx, CombatLog.tsx
+**Input**: MobileControls.tsx
+**Modals**: InventoryModal.tsx, SkillsModal.tsx, QuestModal.tsx, ShopModal.tsx, CraftingModal.tsx, DialogueModal.tsx, ClassSelectModal.tsx, DeathModal.tsx, HelpModal.tsx, SettingsModal.tsx, DataStudioModal.tsx
+**Overlays**: ToastNotification.tsx, OrientationPrompt.tsx
+**Screens**: TitleScreen.tsx
+**Debug**: HeadCalibrationUI.tsx
+**Utilities**: SpriteAvatar.tsx, GameCanvas.tsx
+
+Before creating a new component, verify that an existing one cannot serve the purpose.
 
 ---
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useUIStore, Modal } from '../ui';
+import { useUIStore, Modal, ItemIcon } from '../ui';
 import { PlayerCharacter, Item, ItemType } from '../types/game';
 import { Shield, Swords, Sparkles, Footprints, Trash2, ArrowUpCircle, Layers } from 'lucide-react';
 import { getRarityMeta } from '../utils/itemRarity';
@@ -89,7 +89,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                             {rarityMeta.label}
                           </span>
                         )}
-                        <span className="text-xl sm:text-2xl drop-shadow">{slot.item.icon}</span>
+                        <ItemIcon item={slot.item} className="text-xl sm:text-2xl drop-shadow" />
                         <span className={`text-[9px] sm:text-[10px] font-medium truncate max-w-[70px] sm:max-w-[80px] text-center mt-0.5 sm:mt-1 ${rarityMeta?.textClass ?? 'text-slate-300'}`}>
                           {slot.item.name}
                         </span>
@@ -191,7 +191,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                             {rarityMeta.label}
                           </span>
                         )}
-                        <span className="text-xl sm:text-2xl drop-shadow">{item.icon}</span>
+                        <ItemIcon item={item} className="text-xl sm:text-2xl drop-shadow" />
                         {item.count && item.count > 1 && (
                           <span className="absolute bottom-1 right-1 sm:right-1.5 bg-[#08080c]/90 text-amber-300 text-[9px] sm:text-[10px] font-bold font-pixel px-1 rounded border border-amber-500/20">
                             x{item.count}
@@ -248,7 +248,7 @@ const Selected_item_detail: React.FC<{
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <span className={`text-3xl p-2 bg-slate-900/90 border rounded-xl ${rarityMeta.borderClass}`}>
-            {item.icon}
+            <ItemIcon item={item} className="text-3xl" />
           </span>
           <div>
             <div className="flex items-center gap-2">
