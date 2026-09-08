@@ -732,6 +732,7 @@ export default function App() {
     }
 
     setPlayer((prev) => (prev ? { ...prev, lastAttackTimestamp: now } : null));
+    rendererRef.current?.triggerPlayerAttack();
 
     if (!target) {
       addLog('Atacaste al aire (sin enemigo alineado en rango).', 'player_miss');
@@ -837,6 +838,7 @@ export default function App() {
     }
 
     setLastSpellTimestamps((prev) => ({ ...prev, [spell.id]: now }));
+    rendererRef.current?.triggerPlayerAction('casting');
     // Consume MP
     setPlayer((prev) => (prev ? { ...prev, currentMp: prev.currentMp - spell.manaCost } : null));
     sound.playMagicSpell(spell.animation);
@@ -1183,6 +1185,7 @@ export default function App() {
             addFloatingText('¡BLOQUEO!', '#38bdf8', p.x, p.y, undefined, 'miss');
             addLog(result.message, 'block');
           } else if (result.hit) {
+            rendererRef.current?.triggerPlayerAction('damage');
             sound.playHitImpact();
             if (result.isCritical) {
               rendererRef.current?.triggerCriticalHitShake(false, 0.78, 480, p.x, p.y);
