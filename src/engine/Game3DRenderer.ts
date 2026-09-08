@@ -407,8 +407,13 @@ export class Game3DRenderer {
       img.crossOrigin = 'anonymous';
       img.src = url;
       img.onload = () => {
-        this.spriteTextureCache.clear();
-        this.pbrGenerator.clearCaches();
+        // Only invalidate atlas cache for this specific sprite, not all textures
+        for (const [key, tex] of this.atlasTextureCache) {
+          if (key.startsWith(url)) {
+            tex.dispose();
+            this.atlasTextureCache.delete(key);
+          }
+        }
         this.playerNeedsTextureRefresh = true;
         this.mobsNeedTextureRefresh = true;
       };
@@ -1294,6 +1299,30 @@ export class Game3DRenderer {
       this.entityGroup.add(mesh);
       this.npcSprites.set(npc.id, mesh);
     });
+  }
+
+  /**
+   * Pre-generates 4-frame atlas textures for all mob sprites on the current map.
+   * Call this after AssetLoader completes to eliminate runtime atlas generation hitches.
+   * All mobs share the same spritesheet, so this generates at most 4 atlases (one per direction).
+   */
+  public preloadMobAtlases(): void {
+    const directions: Array<'up' | 'down' | 'left' | 'right'> = ['down', 'left', 'right', 'up'];
+    const spriteUrl = DEFAULT_MOB_SPRITE;
+    const img = this.getOrLoadImage(spriteUrl);
+    if (!img) return;
+    for (const facing of directions) {
+      const cacheKey = `${spriteUrl}_${facing}`;
+      if (this.atlasTextureCache.has(cacheKey)) continue;
+      const atlasCanvas = this.render4FrameAtlas(spriteUrl, '#ffffff', 'mob', facing, false);
+      const tex = new THREE.CanvasTexture(atlasCanvas);
+      tex.generateMipmaps = true;
+      tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+      tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      this.atlasTextureCache.set(cacheKey, tex);
+    }
   }
 
   // --- 4-FRAME ATLAS GENERATOR ---
