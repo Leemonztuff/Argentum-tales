@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SPRITE_CANVAS } from './worldScale';
 
 export interface SpriteMaterialTextures {
   texture: THREE.Texture;
@@ -373,8 +374,8 @@ export class SpritePBRGenerator {
       };
     }
 
-    const frameW = 256;
-    const frameH = 256;
+    const frameW = SPRITE_CANVAS;
+    const frameH = SPRITE_CANVAS;
     const frames = 4;
 
     const normalCanvas = document.createElement('canvas');
