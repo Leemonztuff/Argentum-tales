@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { ActiveMob } from '../types/game';
 import { SpriteMaterialTextures } from './SpritePBRGenerator';
+import { QUAD_CENTER_TO_FEET_UNIT } from './worldScale';
+
+/** Hard capacity per instanced batch (mobs per spritesheet). */
+export const MAX_INSTANCES_PER_BATCH = 256;
+/** Hard capacity of the shared instanced shadow mesh. */
+export const MAX_INSTANCED_SHADOWS = 512;
+/** Consecutive empty frames before an idle batch is disposed. */
+const EMPTY_BATCH_LIFETIME_FRAMES = 5;
 
 export interface MobBatch {
   instancedMesh: THREE.InstancedMesh;
@@ -26,9 +34,6 @@ function createSoftShadowTexture(): THREE.Texture {
   const cy = size / 2;
   const maxR = size / 2;
 
-  ctx.clearRect(0, 0, size, size);
-
-  // Multi-stop natural contact shadow gradient
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
   grad.addColorStop(0.0, 'rgba(2, 6, 23, 0.85)');    // Inner ambient occlusion core directly under feet
   grad.addColorStop(0.25, 'rgba(3, 7, 26, 0.65)');   // Contact body shadow
@@ -47,6 +52,17 @@ function createSoftShadowTexture(): THREE.Texture {
   return tex;
 }
 
+/**
+ * GPU instancing for mob billboards + shared instanced contact shadows.
+ *
+ * Per frame the renderer calls beginFrame(), packs instances, then
+ * commitFrame() uploads only dirty buffers and disposes batches that have
+ * been empty for EMPTY_BATCH_LIFETIME_FRAMES consecutive frames.
+ *
+ * addMobInstance() returns false when the batch capacity is exceeded so the
+ * renderer can fall back to a non-instanced path instead of silently
+ * dropping the entity.
+ */
 export class SpriteInstancingManager {
   private entityGroup: THREE.Group;
   private sharedBillboardGeometry: THREE.PlaneGeometry;
@@ -55,7 +71,7 @@ export class SpriteInstancingManager {
   private instancedShadowMesh: THREE.InstancedMesh;
 
   private mobInstancedBatches: Map<string, MobBatch> = new Map();
-  /** Tracks how many consecutive frames each batch has been empty. Pruned after 5. */
+  /** Tracks how many consecutive frames each batch has been empty. */
   private batchEmptyFrames: Map<string, number> = new Map();
   private shadowIndex: number = 0;
   private dummyObj: THREE.Object3D = new THREE.Object3D();
@@ -63,9 +79,10 @@ export class SpriteInstancingManager {
   constructor(entityGroup: THREE.Group) {
     this.entityGroup = entityGroup;
 
-    // Shared 2.5D billboard plane geometry anchored at feet y = 242 (256x256 coordinate system)
+    // Shared 2.5D billboard plane geometry anchored so the authored feet line
+    // (SPRITE_LAYOUT.feet of the 256px canvas) sits at the instance origin (y=0).
     this.sharedBillboardGeometry = new THREE.PlaneGeometry(1, 1);
-    this.sharedBillboardGeometry.translate(0, 0.5 - 14 / 256, 0);
+    this.sharedBillboardGeometry.translate(0, QUAD_CENTER_TO_FEET_UNIT, 0);
     this.sharedBillboardGeometry.computeVertexNormals();
     this.sharedBillboardGeometry.computeTangents();
 
@@ -85,7 +102,7 @@ export class SpriteInstancingManager {
     this.instancedShadowMesh = new THREE.InstancedMesh(
       this.sharedShadowGeometry,
       this.sharedShadowMaterial,
-      512
+      MAX_INSTANCED_SHADOWS
     );
     this.instancedShadowMesh.frustumCulled = true;
     this.instancedShadowMesh.count = 0;
@@ -104,8 +121,12 @@ export class SpriteInstancingManager {
     this.shadowIndex = 0;
   }
 
+  /**
+   * Packs one elliptical contact shadow instance. Silently ignored when the
+   * shared shadow mesh is full (rendering continues without that shadow).
+   */
   public packShadowInstance(x: number, y: number, radius: number): void {
-    if (!this.instancedShadowMesh) return;
+    if (!this.instancedShadowMesh || this.shadowIndex >= MAX_INSTANCED_SHADOWS) return;
     // 2.5D Elliptical proportion: slightly wider in X and foreshortened in Z
     const scaleX = radius * 2.6;
     const scaleZ = radius * 1.8;
@@ -118,6 +139,11 @@ export class SpriteInstancingManager {
     this.instancedShadowMesh.setMatrixAt(this.shadowIndex++, this.dummyObj.matrix);
   }
 
+  /**
+   * Packs one mob billboard instance into the batch identified by batchKey.
+   * Returns false when the batch is at capacity — the caller must render the
+   * entity through an alternative (non-instanced) path.
+   */
   public addMobInstance(
     batchKey: string,
     mob: ActiveMob,
@@ -128,17 +154,17 @@ export class SpriteInstancingManager {
     createMaterialCallback: () => THREE.MeshStandardMaterial,
     updateMaterialCallback?: (mat: THREE.MeshStandardMaterial) => void,
     frameIndex: number = 0
-  ): void {
+  ): boolean {
     let batch = this.mobInstancedBatches.get(batchKey);
     if (!batch) {
       const mat = createMaterialCallback();
       // Clone geometry to attach per-instance frame attribute
       const geo = this.sharedBillboardGeometry.clone();
-      const frameData = new Float32Array(256).fill(0);
+      const frameData = new Float32Array(MAX_INSTANCES_PER_BATCH).fill(0);
       const frameAttr = new THREE.InstancedBufferAttribute(frameData, 1);
       geo.setAttribute('aFrameIndex', frameAttr);
 
-      const instancedMesh = new THREE.InstancedMesh(geo, mat, 256);
+      const instancedMesh = new THREE.InstancedMesh(geo, mat, MAX_INSTANCES_PER_BATCH);
       instancedMesh.frustumCulled = true;
       instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
@@ -150,9 +176,15 @@ export class SpriteInstancingManager {
         activeCount: 0,
         frameAttribute: frameAttr,
       };
+      // O(1) batch lookup on raycast hits (getMobFromIntersection).
+      instancedMesh.userData.mobBatch = batch;
       this.mobInstancedBatches.set(batchKey, batch);
     } else if (updateMaterialCallback) {
       updateMaterialCallback(batch.material);
+    }
+
+    if (batch.activeCount >= MAX_INSTANCES_PER_BATCH) {
+      return false;
     }
 
     const idx = batch.activeCount;
@@ -166,10 +198,10 @@ export class SpriteInstancingManager {
     batch.instancedMesh.setMatrixAt(idx, this.dummyObj.matrix);
     if (batch.frameAttribute) {
       (batch.frameAttribute.array as Float32Array)[idx] = frameIndex;
-      batch.frameAttribute.needsUpdate = true;
     }
     batch.mobMap.set(idx, mob);
     batch.activeCount++;
+    return true;
   }
 
   public commitFrame(): void {
@@ -179,12 +211,13 @@ export class SpriteInstancingManager {
       batch.instancedMesh.count = batch.activeCount;
       if (batch.activeCount > 0) {
         batch.instancedMesh.instanceMatrix.needsUpdate = true;
+        if (batch.frameAttribute) batch.frameAttribute.needsUpdate = true;
         batch.instancedMesh.visible = true;
         this.batchEmptyFrames.delete(key);
       } else {
         batch.instancedMesh.visible = false;
         const emptyCount = (this.batchEmptyFrames.get(key) || 0) + 1;
-        if (emptyCount >= 5) {
+        if (emptyCount >= EMPTY_BATCH_LIFETIME_FRAMES) {
           keysToDelete.push(key);
         } else {
           this.batchEmptyFrames.set(key, emptyCount);
@@ -192,13 +225,13 @@ export class SpriteInstancingManager {
       }
     });
 
-    // Prune batches that have been empty for 5+ consecutive frames
+    // Dispose batches idle for EMPTY_BATCH_LIFETIME_FRAMES+ consecutive frames
     for (const key of keysToDelete) {
       const batch = this.mobInstancedBatches.get(key);
       if (batch) {
         this.entityGroup.remove(batch.instancedMesh);
         batch.instancedMesh.geometry.dispose();
-        (batch.material as THREE.Material).dispose();
+        batch.material.dispose();
         batch.instancedMesh.dispose();
         this.mobInstancedBatches.delete(key);
         this.batchEmptyFrames.delete(key);
@@ -228,12 +261,8 @@ export class SpriteInstancingManager {
 
   public getMobFromIntersection(object: THREE.Object3D, instanceId: number | undefined): ActiveMob | undefined {
     if (instanceId === undefined) return undefined;
-    for (const batch of this.mobInstancedBatches.values()) {
-      if (batch.instancedMesh === object) {
-        return batch.mobMap.get(instanceId);
-      }
-    }
-    return undefined;
+    const batch = (object as THREE.InstancedMesh).userData?.mobBatch as MobBatch | undefined;
+    return batch ? batch.mobMap.get(instanceId) : undefined;
   }
 
   public setNormalMapEnabled(enabled: boolean): void {

@@ -1,5 +1,24 @@
 import * as THREE from 'three';
 
+/**
+ * Camera framing constants — SINGLE SOURCE OF TRUTH.
+ * The renderer, deadzone math and pixel-density helpers all read from here;
+ * changing a value updates camera framing, deadzone size and pixel snapping
+ * coherently everywhere.
+ */
+export const CAMERA_BASE_HEIGHT = 13.5;
+export const CAMERA_DEPTH_LANDSCAPE = 10.5;
+export const CAMERA_DEPTH_PORTRAIT = 11.5;
+export const CAMERA_TARGET_Y_LANDSCAPE = 0.8;
+export const CAMERA_TARGET_Y_PORTRAIT = 1.35;
+
+/** Reference camera pitch distance (world units) at zoom 1.0. */
+export function getCameraReferenceDistance(aspect: number): number {
+  const dY = CAMERA_BASE_HEIGHT - (aspect < 1.0 ? CAMERA_TARGET_Y_PORTRAIT : CAMERA_TARGET_Y_LANDSCAPE);
+  const dZ = aspect < 1.0 ? CAMERA_DEPTH_PORTRAIT : CAMERA_DEPTH_LANDSCAPE;
+  return Math.sqrt(dY * dY + dZ * dZ);
+}
+
 export interface CameraManagerConfig {
   fov?: number;
   near?: number;
@@ -14,14 +33,16 @@ export class CameraManager {
   private baseFov: number = 30;
 
   // Logical camera states for separating logical simulation from snapped rendering
-  private logicalCameraPos: THREE.Vector3 = new THREE.Vector3(12, 13.5, 13.5);
-  private logicalCameraTarget: THREE.Vector3 = new THREE.Vector3(12, 0.8, 12);
-  private smoothCameraTarget: THREE.Vector3 = new THREE.Vector3(12, 0.8, 12);
+  private logicalCameraPos: THREE.Vector3 = new THREE.Vector3(12, CAMERA_BASE_HEIGHT, 13.5);
+  private logicalCameraTarget: THREE.Vector3 = new THREE.Vector3(12, CAMERA_TARGET_Y_LANDSCAPE, 12);
+  private smoothCameraTarget: THREE.Vector3 = new THREE.Vector3(12, CAMERA_TARGET_Y_LANDSCAPE, 12);
 
   // Configuration options
   public cameraMode: 'DEADZONE' | 'HARD_FOLLOW' = 'DEADZONE';
   public cameraPixelSnap: boolean = true;
   public cameraSmoothing: boolean = false;
+  /** Fraction of the smallest visible screen dimension reserved as deadzone radius. */
+  public cameraDeadzonePercent: number = 0.30;
 
   // Screen shake & rotational tilt state
   private shakeIntensity: number = 0;
@@ -37,6 +58,12 @@ export class CameraManager {
   private minZoom: number = 0.6; // Close-up action
   private maxZoom: number = 2.5; // Tactical bird's eye view
 
+  // Reusable vectors: zero allocations per frame in update()
+  private _targetCamPos: THREE.Vector3 = new THREE.Vector3();
+  private _shakenCamPos: THREE.Vector3 = new THREE.Vector3();
+  private _shakenLookAt: THREE.Vector3 = new THREE.Vector3();
+  private _snappedLookAt: THREE.Vector3 = new THREE.Vector3();
+
   constructor(aspect: number, config?: CameraManagerConfig) {
     const fov = config?.fov ?? 30;
     this.baseFov = fov;
@@ -48,8 +75,8 @@ export class CameraManager {
     if (config?.cameraSmoothing !== undefined) this.cameraSmoothing = config.cameraSmoothing;
 
     this.camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
-    this.camera.position.set(12, 13.5, 13.5);
-    this.camera.lookAt(12, 0.8, 12);
+    this.camera.position.set(12, CAMERA_BASE_HEIGHT, 13.5);
+    this.camera.lookAt(12, CAMERA_TARGET_Y_LANDSCAPE, 12);
   }
 
   public getCamera(): THREE.PerspectiveCamera {
@@ -117,9 +144,21 @@ export class CameraManager {
     this.camera.lookAt(this.smoothCameraTarget);
   }
 
+  /**
+   * Screen-relative deadzone radius in world units.
+   *
+   * The deadzone covers a fixed FRACTION of the visible play area on any
+   * viewport (portrait or landscape), computed from the reference camera
+   * framing constants — the only deadzone implementation in the codebase.
+   */
   public getCameraDeadzoneUnits(aspect: number): number {
-    const baseDeadzone = aspect < 1.0 ? 1.8 : 2.5;
-    return baseDeadzone;
+    if (!this.camera) return 2.2;
+    const targetY = aspect < 1.0 ? CAMERA_TARGET_Y_PORTRAIT : CAMERA_TARGET_Y_LANDSCAPE;
+    const d = getCameraReferenceDistance(aspect) * this.zoomFactor;
+    const visibleHeight = 2 * d * Math.tan((this.camera.fov * Math.PI) / 360);
+    const visibleWidth = visibleHeight * aspect;
+    // Radius (not diameter) of the box → percent / 2
+    return Math.min(visibleWidth, visibleHeight) * (this.cameraDeadzonePercent / 2);
   }
 
   public update(
@@ -129,14 +168,15 @@ export class CameraManager {
     pixelPerfectEnabled: boolean,
     snapValFn: (val: number) => number
   ): void {
-    const cameraTargetY = aspect < 1.0 ? 1.35 : 0.8;
+    const cameraTargetY = aspect < 1.0 ? CAMERA_TARGET_Y_PORTRAIT : CAMERA_TARGET_Y_LANDSCAPE;
+    const baseDepthOffset = aspect < 1.0 ? CAMERA_DEPTH_PORTRAIT : CAMERA_DEPTH_LANDSCAPE;
 
     if (this.cameraMode === 'DEADZONE') {
       const dx = playerPx - this.logicalCameraTarget.x;
       const dy = playerPy - this.logicalCameraTarget.z;
       const dist = Math.hypot(dx, dy);
       const dynamicDeadzone = this.getCameraDeadzoneUnits(aspect);
-      if (dist > dynamicDeadzone) {
+      if (dist > dynamicDeadzone && dist > 0.0001) {
         const pushDist = dist - dynamicDeadzone;
         const dirX = dx / dist;
         const dirY = dy / dist;
@@ -151,12 +191,10 @@ export class CameraManager {
     // Interpolate zoom factor for smoothness
     this.zoomFactor += (this.targetZoomFactor - this.zoomFactor) * 0.08;
 
-    const baseHeightOffset = 13.5;
-    const baseDepthOffset = aspect < 1.0 ? 11.5 : 10.5;
-    const heightOffset = baseHeightOffset * this.zoomFactor;
+    const heightOffset = CAMERA_BASE_HEIGHT * this.zoomFactor;
     const depthOffset = baseDepthOffset * this.zoomFactor;
 
-    const targetCamPos = new THREE.Vector3(
+    this._targetCamPos.set(
       this.logicalCameraTarget.x,
       heightOffset,
       this.logicalCameraTarget.z + depthOffset
@@ -165,9 +203,9 @@ export class CameraManager {
     const now = Date.now();
     if (now >= this.shakeEndTime) {
       if (this.cameraSmoothing) {
-        this.logicalCameraPos.lerp(targetCamPos, 0.12);
+        this.logicalCameraPos.lerp(this._targetCamPos, 0.12);
       } else {
-        this.logicalCameraPos.copy(targetCamPos);
+        this.logicalCameraPos.copy(this._targetCamPos);
       }
 
       if (this.cameraPixelSnap && pixelPerfectEnabled) {
@@ -194,9 +232,9 @@ export class CameraManager {
       }
     } else {
       if (this.cameraSmoothing) {
-        this.logicalCameraPos.lerp(targetCamPos, 0.12);
+        this.logicalCameraPos.lerp(this._targetCamPos, 0.12);
       } else {
-        this.logicalCameraPos.copy(targetCamPos);
+        this.logicalCameraPos.copy(this._targetCamPos);
       }
 
       const remainingRatio = (this.shakeEndTime - now) / this.shakeDuration;
@@ -204,32 +242,24 @@ export class CameraManager {
       const offsetX = (Math.random() - 0.5) * 2 * currentIntensity;
       const offsetZ = (Math.random() - 0.5) * 2 * currentIntensity;
 
-      const shakenCamPos = new THREE.Vector3(
-        this.logicalCameraPos.x + offsetX,
-        this.logicalCameraPos.y,
-        this.logicalCameraPos.z + offsetZ
-      );
-      const shakenLookAt = new THREE.Vector3(
-        this.logicalCameraTarget.x + offsetX,
-        this.logicalCameraTarget.y,
-        this.logicalCameraTarget.z + offsetZ
-      );
+      this._shakenCamPos.set(this.logicalCameraPos.x + offsetX, this.logicalCameraPos.y, this.logicalCameraPos.z + offsetZ);
+      this._shakenLookAt.set(this.logicalCameraTarget.x + offsetX, this.logicalCameraTarget.y, this.logicalCameraTarget.z + offsetZ);
 
       if (this.cameraPixelSnap && pixelPerfectEnabled) {
         this.camera.position.set(
-          snapValFn(shakenCamPos.x),
-          shakenCamPos.y,
-          snapValFn(shakenCamPos.z)
+          snapValFn(this._shakenCamPos.x),
+          this._shakenCamPos.y,
+          snapValFn(this._shakenCamPos.z)
         );
-        const snappedLookAt = new THREE.Vector3(
-          snapValFn(shakenLookAt.x),
-          shakenLookAt.y,
-          snapValFn(shakenLookAt.z)
+        this._snappedLookAt.set(
+          snapValFn(this._shakenLookAt.x),
+          this._shakenLookAt.y,
+          snapValFn(this._shakenLookAt.z)
         );
-        this.camera.lookAt(snappedLookAt);
+        this.camera.lookAt(this._snappedLookAt);
       } else {
-        this.camera.position.copy(shakenCamPos);
-        this.camera.lookAt(shakenLookAt);
+        this.camera.position.copy(this._shakenCamPos);
+        this.camera.lookAt(this._shakenLookAt);
       }
 
       // Apply Rotational Time Tilt (Z-Roll oscillation and pitch tilt)

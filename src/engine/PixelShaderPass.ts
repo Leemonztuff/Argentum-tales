@@ -403,6 +403,12 @@ export class PixelShaderPass {
   private width: number = 1;
   private height: number = 1;
 
+  /** Optional screen-space Y (0..1) the DOF band should track (e.g. the player). */
+  private focalTarget: number | null = null;
+  /** Smoothed focal plane actually uploaded to the GPU each frame. */
+  private smoothedFocalPlane: number = DEFAULT_PIXEL_SHADER_CONFIG.focalPlane;
+  private lastRenderTime: number = 0;
+
   constructor(initialConfig: Partial<PixelShaderConfig> = {}) {
     this.config = { ...DEFAULT_PIXEL_SHADER_CONFIG, ...initialConfig };
 
@@ -517,7 +523,8 @@ export class PixelShaderPass {
       this.material.uniforms.uTiltShiftStrength.value = this.config.tiltShiftStrength ?? 0.0;
     }
     if (this.material.uniforms.uFocalPlane) {
-      this.material.uniforms.uFocalPlane.value = this.config.focalPlane ?? 0.44;
+      this.smoothedFocalPlane = this.config.focalPlane ?? 0.44;
+      this.material.uniforms.uFocalPlane.value = this.smoothedFocalPlane;
     }
     if (this.material.uniforms.uFocalBandWidth) {
       this.material.uniforms.uFocalBandWidth.value = this.config.focalBandWidth ?? 0.30;
@@ -532,6 +539,17 @@ export class PixelShaderPass {
     if (preset) {
       this.updateConfig(preset.config);
     }
+  }
+
+  /**
+   * Sets the screen-space focal reference for the tilt-shift DOF. Pass the
+   * projected screen Y of the player (0 = bottom, 1 = top) each frame, or
+   * null to fall back to the static config focal plane.
+   */
+  public setFocalPlaneTarget(target: number | null): void {
+    this.focalTarget = target === null || !Number.isFinite(target)
+      ? null
+      : THREE.MathUtils.clamp(target, 0.05, 0.95);
   }
 
   public getConfig(): PixelShaderConfig {
@@ -562,6 +580,18 @@ export class PixelShaderPass {
     this.material.uniforms.tDepth.value = this.renderTarget.depthTexture;
     this.material.uniforms.cameraNear.value = mainCamera.near;
     this.material.uniforms.cameraFar.value = mainCamera.far;
+
+    // Smooth the DOF focal plane toward the tracked target (frame-rate
+    // independent exponential smoothing keeps the diorama band from swimming).
+    const now = performance.now();
+    const dt = this.lastRenderTime > 0 ? Math.min(0.1, (now - this.lastRenderTime) / 1000) : 0.016;
+    this.lastRenderTime = now;
+    const defaultFocal = this.config.focalPlane ?? DEFAULT_PIXEL_SHADER_CONFIG.focalPlane;
+    const targetFocal = this.focalTarget ?? defaultFocal;
+    this.smoothedFocalPlane += (targetFocal - this.smoothedFocalPlane) * (1.0 - Math.exp(-8.0 * dt));
+    if (this.material.uniforms.uFocalPlane) {
+      this.material.uniforms.uFocalPlane.value = this.smoothedFocalPlane;
+    }
 
     // 3. Render post-processing quad to screen canvas
     renderer.setRenderTarget(null);
