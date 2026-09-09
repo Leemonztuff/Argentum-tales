@@ -462,8 +462,12 @@ export class SpritePBRGenerator {
     mat.userData.roughnessMap = textures.roughnessTexture;
     mat.userData.metalnessMap = textures.metalnessTexture;
 
-    // Advanced Normal-Reactive Specular Shader Injection
-    // Also supports 4-frame atlas UV offset via aFrameIndex attribute
+    // Advanced Normal-Reactive Specular Shader Injection (Three.js r185-compatible)
+    // - 4-frame horizontal atlas selection via the aFrameIndex instance attribute:
+    //   every channel-0 per-map UV varying (vMapUv / vNormalMapUv / vRoughnessMapUv /
+    //   vMetalnessMapUv) is rebuilt, since r151+ no longer uses a shared vUv/uvTransform.
+    // - Extra Blinn-Phong specular + rim accumulate into reflectedLight.directSpecular
+    //   (writing gl_FragColor here would be overwritten later by opaque_fragment).
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uSpecularIntensity = { value: this.spriteSpecularIntensity };
       shader.uniforms.uSpecularShininess = { value: this.spriteSpecularShininess };
@@ -471,39 +475,42 @@ export class SpritePBRGenerator {
       shader.uniforms.uAtlasFrames = { value: textures.atlasFrames ?? 1.0 };
       mat.userData.shader = shader;
 
-      // Inject aFrameIndex attribute into vertex shader
+      // Declare the frame attribute + atlas uniform and a shared frame-UV helper.
+      // Non-instanced meshes without aFrameIndex read the generic vertex value (0)
+      // and, with uAtlasFrames <= 1.5, atlasFrameUv() is the identity — so a single
+      // shader program serves both atlased and single-frame sprite materials.
       shader.vertexShader = shader.vertexShader.replace(
         '#include <common>',
         `#include <common>
         attribute float aFrameIndex;
-        varying float vFrameIndex;`
+        uniform float uAtlasFrames;
+
+        vec2 atlasFrameUv( vec2 baseUv ) {
+          if ( uAtlasFrames > 1.5 ) {
+            return ( baseUv + vec2( aFrameIndex, 0.0 ) ) / uAtlasFrames;
+          }
+          return baseUv;
+        }`
       );
 
-      // Pass frame index to fragment shader
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-        vFrameIndex = aFrameIndex;`
-      );
-
-      // Override UV transform to support 4-frame horizontal atlas
+      // Rebuild all channel-0 map UVs with the selected atlas frame (r185 per-map varyings)
       shader.vertexShader = shader.vertexShader.replace(
         '#include <uv_vertex>',
-        `
-        // Atlas UV offset: select frame from 4-frame horizontal strip
-        #ifdef USE_UV
-          vec2 _atlasUv = uv;
-          float _frameIdx = aFrameIndex;
-          float _atlasFrames = uAtlasFrames;
-          if (_atlasFrames > 1.5) {
-            _atlasUv = (uv + vec2(_frameIdx, 0.0)) / vec2(_atlasFrames, 1.0);
-          }
-          vUv = (uvTransform * vec4(_atlasUv, 0.0, 1.0)).xy;
-          #ifdef USE_UV2
-            vUv2 = vUv;
-          #endif
+        `#if defined( USE_UV ) || defined( USE_ANISOTROPY )
+          vUv = vec3( uv, 1 ).xy;
         #endif
-        `
+        #ifdef USE_MAP
+          vMapUv = ( mapTransform * vec3( atlasFrameUv( MAP_UV ), 1 ) ).xy;
+        #endif
+        #ifdef USE_NORMALMAP
+          vNormalMapUv = ( normalMapTransform * vec3( atlasFrameUv( NORMALMAP_UV ), 1 ) ).xy;
+        #endif
+        #ifdef USE_ROUGHNESSMAP
+          vRoughnessMapUv = ( roughnessMapTransform * vec3( atlasFrameUv( ROUGHNESSMAP_UV ), 1 ) ).xy;
+        #endif
+        #ifdef USE_METALNESSMAP
+          vMetalnessMapUv = ( metalnessMapTransform * vec3( atlasFrameUv( METALNESSMAP_UV ), 1 ) ).xy;
+        #endif`
       );
 
       shader.fragmentShader = `
@@ -527,7 +534,7 @@ export class SpritePBRGenerator {
           if (specMask > 0.005 && uSpecularIntensity > 0.0) {
             vec3 N = normalize( geometryNormal );
             vec3 V = normalize( geometryViewDir );
-            vec3 F0 = mix(vec3(0.04), gl_FragColor.rgb, specMetalness);
+            vec3 F0 = mix(vec3(0.04), diffuseColor.rgb, specMetalness);
             
             #if NUM_DIR_LIGHTS > 0
               #pragma unroll_loop_start
@@ -548,7 +555,7 @@ export class SpritePBRGenerator {
                     vec3 F = F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - dirVdotH, 0.0, 1.0), 5.0);
                     
                     vec3 specColor = directionalLights[ i ].color * D * dirNdotL * F * specMask * (uSpecularIntensity * 0.35);
-                    gl_FragColor.rgb += specColor;
+                    reflectedLight.directSpecular += specColor;
                   }
                 }
               }
@@ -580,7 +587,7 @@ export class SpritePBRGenerator {
                       vec3 F = F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - ptVdotH, 0.0, 1.0), 5.0);
                       
                       vec3 specColor = pointLights[ i ].color * D * ptNdotL * ptAttenuation * F * specMask * (uSpecularIntensity * 0.45);
-                      gl_FragColor.rgb += specColor;
+                      reflectedLight.directSpecular += specColor;
                     }
                   }
                 }
@@ -591,8 +598,8 @@ export class SpritePBRGenerator {
             if (uSpecularRimPower > 0.0) {
               float NdotV = max( dot( N, V ), 0.0 );
               float rim = pow( clamp(1.0 - NdotV, 0.0, 1.0), 3.2 ) * uSpecularRimPower * specMask * 0.40;
-              vec3 rimTint = mix(vec3(0.92, 0.96, 1.0), gl_FragColor.rgb, specMetalness);
-              gl_FragColor.rgb += rimTint * rim;
+              vec3 rimTint = mix(vec3(0.92, 0.96, 1.0), diffuseColor.rgb, specMetalness);
+              reflectedLight.directSpecular += rimTint * rim;
             }
           }
         #endif

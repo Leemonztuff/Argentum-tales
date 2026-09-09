@@ -8,8 +8,18 @@ import { EnvironmentGenerator } from './EnvironmentGenerator';
 import { TextureAtlas, AtlasTextureType } from './TextureAtlas';
 import { PixelShaderConfig, ShaderPresetMode } from './PixelShaderPass';
 import { SpritePBRGenerator, SpriteMaterialTextures } from './SpritePBRGenerator';
-import { CameraManager } from './CameraManager';
+import { CameraManager, getCameraReferenceDistance } from './CameraManager';
 import { SpriteInstancingManager } from './SpriteInstancingManager';
+import {
+  HP_BAR,
+  QUAD_CENTER_TO_FEET_UNIT,
+  SHADOW_RADIUS,
+  SPRITE_CANVAS,
+  SPRITE_LAYOUT,
+  canvasYToWorldY,
+  getEntityWorldScale,
+  getFeetOffsetWorld,
+} from './worldScale';
 import { PostProcessingManager } from './PostProcessingManager';
 
 export { type SpriteMaterialTextures };
@@ -165,9 +175,10 @@ export class Game3DRenderer {
   private renderer: THREE.WebGLRenderer;
   private animationFrameId: number | null = null;
 
-  // Capable-device (desktop/high-perf mobile) vs low-power target: drives pixelRatio,
-  // tone mapping, and shadow resolution scaling (L1/L2).
+  // Device tier (mobile-first): drives pixelRatio caps, shadow resolution and
+  // post-processing resolution. 'low' = phones, 'mid' = tablets, 'high' = desktop.
   private readonly deviceHighQuality: boolean;
+  private readonly devicePixelRatioCap: number;
 
   // Submodules
   public cameraManager: CameraManager;
@@ -291,14 +302,6 @@ export class Game3DRenderer {
     this.pbrGenerator.spriteNormalEnabled = enabled;
     this.playerNeedsTextureRefresh = true;
     this.mobsNeedTextureRefresh = true;
-     const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
-     if (playerSprites.length > 0) {
-       playerSprites.forEach((sprite) => {
-         const m = sprite.material as any;
-         m.normalMap = enabled ? ((m.userData.normalMap as THREE.Texture) || null) : null;
-         sprite.material.needsUpdate = true;
-       });
-     }
      this.instancingManager.setNormalMapEnabled(enabled);
      this.npcSprites.forEach((mesh) => {
        mesh.material.normalMap = enabled ? ((mesh.material.userData.normalMap as THREE.Texture) || null) : null;
@@ -311,13 +314,6 @@ export class Game3DRenderer {
      this.pbrGenerator.clearCaches();
      this.playerNeedsTextureRefresh = true;
      this.mobsNeedTextureRefresh = true;
-      const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
-      if (playerSprites.length > 0) {
-        playerSprites.forEach((sprite) => {
-          const m = sprite.material as any;
-          if (m.normalScale) m.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
-        });
-      }
     this.instancingManager.setNormalScale(this.pbrGenerator.spriteNormalStrength);
     this.npcSprites.forEach((mesh) => {
       mesh.material.normalScale.set(this.pbrGenerator.spriteNormalStrength, this.pbrGenerator.spriteNormalStrength);
@@ -360,21 +356,6 @@ export class Game3DRenderer {
   }
 
   private updateSpriteShaderUniforms(): void {
-    const playerSprites = this.playerGroup?.children.filter((c): c is THREE.Sprite => c instanceof THREE.Sprite) ?? [];
-    playerSprites.forEach((sprite) => {
-      const mat = sprite.material as any;
-      if (mat.userData && mat.userData.shader && mat.userData.shader.uniforms) {
-        if (mat.userData.shader.uniforms.uSpecularIntensity) {
-          mat.userData.shader.uniforms.uSpecularIntensity.value = this.spriteSpecularIntensity;
-        }
-        if (mat.userData.shader.uniforms.uSpecularShininess) {
-          mat.userData.shader.uniforms.uSpecularShininess.value = this.spriteSpecularShininess;
-        }
-        if (mat.userData.shader.uniforms.uSpecularRimPower) {
-          mat.userData.shader.uniforms.uSpecularRimPower.value = this.spriteSpecularRimPower;
-        }
-      }
-    });
     this.instancingManager.updateSpecularUniforms(
       this.spriteSpecularIntensity,
       this.spriteSpecularShininess,
@@ -428,10 +409,26 @@ export class Game3DRenderer {
     return img.complete && img.naturalWidth > 0 ? img : null;
   }
 
+  /**
+   * Texture filtering per render mode.
+   * Pixel-perfect: NO mipmaps + nearest — hard 0/1 alpha edges, so alphaTest
+   * 0.5 can never erode thin pixels (feet, hair tips). Smooth mode: mipmapped
+   * linear for graceful minification at distance.
+   */
+  private applySpriteTextureFiltering(tex: THREE.Texture): void {
+    tex.generateMipmaps = !this.pixelPerfectEnabled;
+    tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
+    tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearMipmapLinearFilter;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+  }
+
   // Screen shake & Miss VFX state
   private shakeIntensity: number = 0;
   private shakeEndTime: number = 0;
   private shakeDuration: number = 250;
+  /** Timestamp throttle for instancing-capacity warnings (dev diagnostics). */
+  private lastBatchOverflowWarn: number = 0;
   private currentPlayerPos: { x: number; y: number } | null = null;
   private smoothPlayerPos: { x: number; y: number } | null = null;
   private smoothMobPos: Map<string, { x: number; y: number }> = new Map();
@@ -493,7 +490,13 @@ export class Game3DRenderer {
   // Precision movement configuration and state
   public moveSpeed: number = 4.5;
   public joystickDeadzone: number = 0.12;
-  public cameraDeadzonePercent: number = 0.30;
+  /** Deadzone fraction of the visible play area — delegated to CameraManager. */
+  public get cameraDeadzonePercent(): number {
+    return this.cameraManager.cameraDeadzonePercent;
+  }
+  public set cameraDeadzonePercent(v: number) {
+    this.cameraManager.cameraDeadzonePercent = v;
+  }
 
   private logicalPlayerPos: THREE.Vector2 = new THREE.Vector2(12, 12);
   public activeInput: { x: number; y: number } = { x: 0, y: 0 };
@@ -643,35 +646,20 @@ export class Game3DRenderer {
     this.debugWireframes = [];
   }
 
+  /** Screen-relative deadzone radius — single implementation lives in CameraManager. */
   public getCameraDeadzoneUnits(): number {
-    if (!this.container || this.isDestroyed || !this.camera) return 2.2;
+    if (!this.container || this.isDestroyed) return 2.2;
     const height = this.container.clientHeight || 1;
     const width = this.container.clientWidth || 1;
-    const aspect = width / height;
-
-    // Depth and height offsets of the camera
-    const dY = 13.5 - (aspect < 1.0 ? 1.35 : 0.8);
-    const dZ = aspect < 1.0 ? 11.5 : 10.5;
-    const d = Math.sqrt(dY * dY + dZ * dZ);
-
-    // Total vertical units visible on screen at player's y plane (approximate)
-    const visibleHeight = 2 * d * Math.tan((this.camera.fov * Math.PI) / 360);
-    const visibleWidth = visibleHeight * aspect;
-
-    // We want the deadzone to be ~25-35% of the screen width/height.
-    // Let's take the percentage of the minimum dimension to keep the box balanced
-    const minVisibleDim = Math.min(visibleWidth, visibleHeight);
-    return minVisibleDim * (this.cameraDeadzonePercent / 2); // Divide by 2 because deadzone is measured as a radius!
+    return this.cameraManager.getCameraDeadzoneUnits(width / height);
   }
 
-  // Snapping 3D world coordinates to the screen pixel grid
+  /** Screen pixels (device) per world unit at reference distance — derived from framing constants. */
   private getDynamicPixelsPerUnit(): number {
     if (!this.container || this.isDestroyed) return 48;
     const height = this.container.clientHeight || 1;
     const aspect = this.container.clientWidth / height;
-    const dY = 13.5 - (aspect < 1.0 ? 1.35 : 0.8);
-    const dZ = aspect < 1.0 ? 11.5 : 10.5;
-    const d = Math.sqrt(dY * dY + dZ * dZ);
+    const d = getCameraReferenceDistance(aspect);
     const visibleHeight = 2 * d * Math.tan((this.camera.fov * Math.PI) / 360);
     const pixelRatio = this.renderer ? this.renderer.getPixelRatio() : window.devicePixelRatio;
     return (height * pixelRatio) / visibleHeight;
@@ -683,38 +671,18 @@ export class Game3DRenderer {
     return Math.round(val * pixelsPerUnit) / pixelsPerUnit;
   }
 
-  private createStylizedShadowMesh(isBoss: boolean = false): THREE.Mesh {
-    const radius = isBoss ? 0.75 : 0.38;
-    const geo = new THREE.CircleGeometry(radius, 16);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x020617, // slate-950 dark tone
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = 0.01;
-    return mesh;
-  }
-
-  private getPixelPerfectSpriteScale(isBoss: boolean = false): number {
-    if (!this.pixelPerfectEnabled) return isBoss ? 3.5 : 2.3;
-    const pixelsPerUnit = this.getDynamicPixelsPerUnit();
-    const baseScale = 256 / pixelsPerUnit;
-    return isBoss ? baseScale * 1.5 : baseScale;
-  }
-
   private envGen: EnvironmentGenerator;
 
   constructor(container: HTMLElement) {
     this.container = container;
 
-    // Detect low-power/mobile targets to scale rendering quality (L2).
+    // Detect device tier to scale rendering quality (mobile-first, L2).
+    // 'low'  = phones (cap DPR at 1.5), 'mid' = tablets (2.0), 'high' = desktop (2.0).
     this.deviceHighQuality = !(
       (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) ||
       (typeof navigator !== 'undefined' && navigator.hardwareConcurrency != null && navigator.hardwareConcurrency <= 4)
     );
+    this.devicePixelRatioCap = this.deviceHighQuality ? 2.0 : 1.5;
 
     // Scene
     this.scene = new THREE.Scene();
@@ -735,7 +703,7 @@ export class Game3DRenderer {
     this.telegraphGroup = new THREE.Group();
 
     this.instancingManager = new SpriteInstancingManager(this.entityGroup);
-    const initRatio = Math.min(window.devicePixelRatio, 2);
+    const initRatio = Math.min(window.devicePixelRatio, this.devicePixelRatioCap);
     this.postProcessingManager = new PostProcessingManager(
       container.clientWidth,
       container.clientHeight,
@@ -745,7 +713,8 @@ export class Game3DRenderer {
     // Renderer — Pixel-Perfect setup with crisp image rendering on canvas
     this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for performance
+    // DPR cap by device tier — post-processing runs at this resolution too.
+    this.renderer.setPixelRatio(initRatio);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1227,8 +1196,8 @@ export class Game3DRenderer {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight || 1;
     this.cameraManager.handleResize(width, height);
+    const ratio = Math.min(window.devicePixelRatio, this.devicePixelRatioCap);
     this.renderer.setSize(width, height);
-    const ratio = Math.min(window.devicePixelRatio, 2);
     this.renderer.setPixelRatio(ratio);
     this.postProcessingManager.setSize(width, height, ratio);
   }
@@ -1296,10 +1265,11 @@ export class Game3DRenderer {
 
       const mesh = new THREE.Mesh(this.sharedBillboardGeometry, spriteMat);
       mesh.frustumCulled = true;
-      
-      const scale = this.getPixelPerfectSpriteScale(false);
+
+      // Global relative sizing: NPCs share the humanoid world scale.
+      const scale = getEntityWorldScale('npc');
       mesh.scale.set(scale, scale, 1);
-      
+
       const snappedX = this.snapVal(npc.x);
       const snappedY = this.snapVal(npc.y);
       mesh.position.set(snappedX, 0, snappedY);
@@ -1323,11 +1293,7 @@ export class Game3DRenderer {
       if (this.atlasTextureCache.has(cacheKey)) continue;
       const atlasCanvas = this.render4FrameAtlas(spriteUrl, '#ffffff', 'mob', facing, false);
       const tex = new THREE.CanvasTexture(atlasCanvas);
-      tex.generateMipmaps = true;
-      tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-      tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.needsUpdate = true;
+      this.applySpriteTextureFiltering(tex);
       this.atlasTextureCache.set(cacheKey, tex);
 
       // Generate PBR textures for atlas
@@ -1348,8 +1314,8 @@ export class Game3DRenderer {
     facing: 'up' | 'down' | 'left' | 'right',
     isGhost: boolean
   ): HTMLCanvasElement {
-    const atlasWidth = 256 * 4; // 4 frames side by side
-    const atlasHeight = 256;
+    const atlasWidth = SPRITE_CANVAS * 4; // 4 frames side by side
+    const atlasHeight = SPRITE_CANVAS;
     const canvas = document.createElement('canvas');
     canvas.width = atlasWidth;
     canvas.height = atlasHeight;
@@ -1360,7 +1326,7 @@ export class Game3DRenderer {
       const frameCanvas = this.renderSpriteCanvas(
         '', glowColor, label, isGhost, spriteUrl, facing, frame
       );
-      ctx.drawImage(frameCanvas, frame * 256, 0, 256, 256);
+      ctx.drawImage(frameCanvas, frame * SPRITE_CANVAS, 0, SPRITE_CANVAS, SPRITE_CANVAS);
     }
 
     return canvas;
@@ -1425,8 +1391,8 @@ export class Game3DRenderer {
       const srcW = frameCrop ? frameCrop.w : frameW;
       const srcH = frameCrop ? frameCrop.h : frameH;
 
-      // Target max dimension within 256x256 texture (max height = 180 to fit label at y=22 and feet at y=236)
-      const targetMaxDim = 180;
+      // Target max dimension: visible body cap so label + margin stay clear (SPRITE_LAYOUT contract)
+      const targetMaxDim = SPRITE_LAYOUT.bodyMax;
       // Use a UNIFORM scale based on the full frame size so that all directions/frames of the
       // sheet keep the same pixel density. If we scaled by each frame's crop instead, every
       // direction would get a different destH/destY, making the head jump up/down while turning.
@@ -1438,20 +1404,20 @@ export class Game3DRenderer {
       let destW = Math.floor(srcW * scale);
       let destH = Math.floor(srcH * scale);
 
-      if (destH > 180) {
-        const ratio = 180 / destH;
-        destH = 180;
+      if (destH > SPRITE_LAYOUT.bodyMax) {
+        const ratio = SPRITE_LAYOUT.bodyMax / destH;
+        destH = SPRITE_LAYOUT.bodyMax;
         destW = Math.floor(destW * ratio);
       }
-      if (destW > 220) {
-        const ratio = 220 / destW;
-        destW = 220;
+      if (destW > SPRITE_LAYOUT.maxBodyWidth) {
+        const ratio = SPRITE_LAYOUT.maxBodyWidth / destW;
+        destW = SPRITE_LAYOUT.maxBodyWidth;
         destH = Math.floor(destH * ratio);
       }
 
-      const destX = Math.floor((256 - destW) / 2);
-      // Feet anchored at y = 242, giving top of head destY >= 24 (never cropped at canvas top, below label at 22)
-      const destY = Math.max(24, Math.floor(242 - destH));
+      const destX = Math.floor((SPRITE_CANVAS - destW) / 2);
+      // Feet anchored at the feet line; top never cropped above the top margin (label clearance)
+      const destY = Math.max(SPRITE_LAYOUT.topMargin, Math.floor(SPRITE_LAYOUT.feet - destH));
 
       debugDestX = destX;
       debugDestY = destY;
@@ -1515,7 +1481,7 @@ export class Game3DRenderer {
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 20px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(label, 128, 22);
+      ctx.fillText(label, SPRITE_CANVAS / 2, SPRITE_LAYOUT.labelY);
     }
 
     // DEBUG VISUALIZER OVERLAY (Draw bounds & collision box debugging)
@@ -1538,8 +1504,8 @@ export class Game3DRenderer {
 
       ctx.strokeStyle = '#06b6d4';
       ctx.beginPath();
-      ctx.moveTo(0, 242);
-      ctx.lineTo(256, 242);
+      ctx.moveTo(0, SPRITE_LAYOUT.feet);
+      ctx.lineTo(SPRITE_CANVAS, SPRITE_LAYOUT.feet);
       ctx.stroke();
 
       ctx.strokeStyle = '#f97316';
@@ -1616,18 +1582,18 @@ export class Game3DRenderer {
 
     // Uniform scale based on FULL frame size (not crop) so all directions keep same pixel density
     const bodyMaxDim = Math.max(bodyFrameW, bodyFrameH);
-    const bodyTargetMax = 180;
+    const bodyTargetMax = SPRITE_LAYOUT.bodyMax;
     const bodyScale = isPixelMode
       ? Math.max(1, Math.floor(bodyTargetMax / bodyMaxDim))
       : (bodyTargetMax / bodyMaxDim);
 
     let bodyDestW = Math.floor(bodySrcW * bodyScale);
     let bodyDestH = Math.floor(bodySrcH * bodyScale);
-    if (bodyDestH > 180) { const r = 180 / bodyDestH; bodyDestH = 180; bodyDestW = Math.floor(bodyDestW * r); }
-    if (bodyDestW > 220) { const r = 220 / bodyDestW; bodyDestW = 220; bodyDestH = Math.floor(bodyDestH * r); }
+    if (bodyDestH > SPRITE_LAYOUT.bodyMax) { const r = SPRITE_LAYOUT.bodyMax / bodyDestH; bodyDestH = SPRITE_LAYOUT.bodyMax; bodyDestW = Math.floor(bodyDestW * r); }
+    if (bodyDestW > SPRITE_LAYOUT.maxBodyWidth) { const r = SPRITE_LAYOUT.maxBodyWidth / bodyDestW; bodyDestW = SPRITE_LAYOUT.maxBodyWidth; bodyDestH = Math.floor(bodyDestH * r); }
 
-    const bodyDestX = Math.floor((256 - bodyDestW) / 2);
-    const bodyDestY = Math.max(24, Math.floor(242 - bodyDestH));
+    const bodyDestX = Math.floor((SPRITE_CANVAS - bodyDestW) / 2);
+    const bodyDestY = Math.max(SPRITE_LAYOUT.topMargin, Math.floor(SPRITE_LAYOUT.feet - bodyDestH));
 
     const bodyLayer = drawLayerWithMagentaKey(bodyImg, bodySrcX, bodySrcY, bodySrcW, bodySrcH, 0, 0, bodyDestW, bodyDestH, 1);
     ctx.drawImage(bodyLayer, bodyDestX, bodyDestY);
@@ -1655,14 +1621,17 @@ export class Game3DRenderer {
     const shoulderRatio = Game3DRenderer.SHOULDER_RATIOS[rowIdx];
     const chinRatio = Game3DRenderer.CHIN_RATIOS[rowIdx];
 
-    // Head scale from calibration relative to body dest width
+    // Head scale from calibration relative to body dest width (never exceeds canvas)
     const headContentAspect = headSrcW / headSrcH;
-    const headDestW = Math.round(bodyDestW * calib.scaleRatio);
+    const headDestW = Math.min(SPRITE_CANVAS, Math.round(bodyDestW * calib.scaleRatio));
     const headDestH = Math.round(headDestW / headContentAspect);
 
-    // Horizontal: centered + directional offset + calibration offsetX
+    // Horizontal: centered + directional offset + calibration offsetX (clamped in-canvas)
     const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
-    const headDestX = Math.round((256 - headDestW) / 2) + dirOffsetX + calib.offsetX;
+    const headDestX = Math.min(
+      SPRITE_CANVAS - headDestW,
+      Math.max(0, Math.round((SPRITE_CANVAS - headDestW) / 2) + dirOffsetX + calib.offsetX)
+    );
 
     // Vertical: shoulder position + overlap - chin ratio + calibration offsetY
     const shoulderY = bodyDestY + Math.round(shoulderRatio * bodyDestH);
@@ -1671,6 +1640,32 @@ export class Game3DRenderer {
 
     const headLayer = drawLayerWithMagentaKey(headImg, headSrcX, headSrcY, headSrcW, headSrcH, 0, 0, headDestW, headDestH, 1);
     ctx.drawImage(headLayer, headDestX, headDestY);
+
+    // AUTO-FIT (safe-frame): aggressive calibration or large heads can push the
+    // composite above the label-clearance line (or off-canvas), cutting the
+    // crown. Rescale the finished composite about the FEET anchor — feet stay
+    // exactly on SPRITE_LAYOUT.feet, horizontal center is preserved, and the
+    // character always fits its authored 256px frame.
+    const bounds = getNonEmptyBounds(canvas, 0, 0, SPRITE_CANVAS, SPRITE_CANVAS);
+    if (bounds && bounds.y < SPRITE_LAYOUT.topMargin) {
+      const k = Math.max(
+        0.5,
+        (SPRITE_LAYOUT.feet - SPRITE_LAYOUT.topMargin) / (SPRITE_LAYOUT.feet - bounds.y)
+      );
+      const fitted = document.createElement('canvas');
+      fitted.width = SPRITE_CANVAS;
+      fitted.height = SPRITE_CANVAS;
+      const fctx = fitted.getContext('2d')!;
+      // Smooth rescale: only runs on overflow; softer art beats nearest dropout.
+      fctx.imageSmoothingEnabled = true;
+      fctx.imageSmoothingQuality = 'high';
+      fctx.translate(SPRITE_CANVAS / 2, SPRITE_LAYOUT.feet);
+      fctx.scale(k, k);
+      fctx.translate(-SPRITE_CANVAS / 2, -SPRITE_LAYOUT.feet);
+      fctx.drawImage(canvas, 0, 0);
+      ctx.clearRect(0, 0, SPRITE_CANVAS, SPRITE_CANVAS);
+      ctx.drawImage(fitted, 0, 0);
+    }
 
     applyMagentaKeyToCanvas(canvas);
 
@@ -1741,106 +1736,6 @@ export class Game3DRenderer {
     }
   }
 
-  /**
-   * 4×4 Spritesheet renderer using texture.repeat + offset (no per-frame canvas).
-   * Loads the spritesheet once, creates THREE.Texture with repeat=(1/4,1/4),
-   * and generates PBR maps. Each frame is selected via texture.offset.
-   * Returns SpriteMaterialTextures; caller updates offset each frame.
-   */
-  public getOrCreateSpriteSheetTextures(
-    spriteUrl: string
-  ): SpriteMaterialTextures | null {
-    if (!spriteUrl) return null;
-    const isPixelMode = this.pixelPerfectEnabled;
-    const key = `sheet_${spriteUrl}_pp${isPixelMode}`;
-
-    const texture = this.getCachedSpriteTexture(key);
-    const normalKey = `pbr_normal_${spriteUrl}_pp${isPixelMode}`;
-    const roughnessKey = `pbr_roughness_${spriteUrl}_pp${isPixelMode}`;
-    const metalnessKey = `pbr_metalness_${spriteUrl}_pp${isPixelMode}`;
-    const normalTexture = this.getCachedSpriteTexture(normalKey);
-    const roughnessTexture = this.getCachedSpriteTexture(roughnessKey);
-    const metalnessTexture = this.getCachedSpriteTexture(metalnessKey);
-
-    if (texture && normalTexture && roughnessTexture && metalnessTexture) {
-      return { texture, normalTexture, roughnessTexture, metalnessTexture };
-    }
-
-    // Load image
-    const img = this.getOrLoadImage(spriteUrl);
-    if (!img) return null;
-
-    // Create main texture with 4×4 repeat
-    // flipY=true (Three.js default): flips image so PNG row 0 (top) → texture V=1 (top)
-    // With offset: row 0=down/south(top) at offset.y=0.75, row 3=up/north(bottom) at offset.y=0
-    const tex = new THREE.Texture(img);
-    tex.repeat.set(0.25, 0.25);
-    tex.offset.set(0, 0);
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.generateMipmaps = true;
-    tex.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
-    tex.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-    this.setCachedSpriteTexture(key, tex);
-
-    // Generate PBR maps from the spritesheet image
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(img, 0, 0);
-
-    const generated = this.pbrGenerator.generateSpriteMaterialTextures(canvas, `sheet_${spriteUrl}_pp${isPixelMode}`);
-
-    // Apply same repeat + offset to all PBR maps and cache them
-    const pbrEntries: [string, THREE.Texture | undefined][] = [
-      [normalKey, generated.normalTexture],
-      [roughnessKey, generated.roughnessTexture],
-      [metalnessKey, generated.metalnessTexture],
-    ];
-    for (const [k, t] of pbrEntries) {
-      if (!t) continue;
-      t.repeat.set(0.25, 0.25);
-      t.offset.set(0, 0);
-      t.wrapS = THREE.ClampToEdgeWrapping;
-      t.wrapT = THREE.ClampToEdgeWrapping;
-      t.generateMipmaps = true;
-      t.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
-      t.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
-      t.needsUpdate = true;
-      this.setCachedSpriteTexture(k, t);
-    }
-
-    return { texture: tex, ...generated };
-  }
-
-  /**
-   * Updates texture.offset for a 4×4 spritesheet based on frame index and facing direction.
-   * Row mapping (PNG): 0=down/south(top), 1=left, 2=right, 3=up/north(bottom).
-   * With flipY=true, row 0 (top of PNG) → offset.y=0.75, row 3 (bottom) → offset.y=0.
-   * Both body and head use the same frameIndex and row.
-   */
-  private setSpriteSheetOffset(
-    texture: THREE.Texture | null,
-    animFrame: number,
-    facing: 'up' | 'down' | 'left' | 'right'
-  ): void {
-    if (!texture) return;
-    const col = animFrame % 4;
-    let row = 0;
-    // Left-facing frames are horizontally mirrored → reverse offset.x
-    const colX = facing === 'left' ? (3 - col) : col;
-    if (facing === 'down') row = 0;
-    else if (facing === 'left') row = 1;
-    else if (facing === 'right') row = 2;
-    else if (facing === 'up') row = 3;
-    // flipY=true inverts V: row 0 (PNG top) maps to offset.y=0.75, row 3 to offset.y=0
-    const adjustedRow = 3 - row;
-    texture.offset.set(colX * 0.25, adjustedRow * 0.25);
-  }
-
   public getOrCreateSpriteTextures(
     emojiOrIcon: string,
     glowColor: string,
@@ -1875,9 +1770,7 @@ export class Game3DRenderer {
       );
 
       texture = new THREE.CanvasTexture(canvas);
-      texture.generateMipmaps = true;
-      texture.magFilter = isPixelMode ? THREE.NearestFilter : THREE.LinearFilter;
-      texture.minFilter = isPixelMode ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
+      this.applySpriteTextureFiltering(texture);
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -1998,7 +1891,12 @@ export class Game3DRenderer {
     return canvas;
   }
 
-  private updateMobHpBar(mob: ActiveMob, renderX: number, renderY: number, scale: number): void {
+  /**
+   * World-unit HP bar anchored ABOVE THE HEAD of the entity (see worldScale.HP_BAR).
+   * Decoupled from sprite scale so bars keep a constant, readable size on every
+   * screen and entity type. Only the fill texture is regenerated per HP bucket.
+   */
+  private updateMobHpBar(mob: ActiveMob, renderX: number, renderY: number): void {
     const hpPct = mob.currentHp / mob.maxHp;
     const hpBucket = Math.round(hpPct * 20);
 
@@ -2006,9 +1904,7 @@ export class Game3DRenderer {
     if (existing && existing.lastHpBucket === hpBucket) {
       const sprite = this.mobHpBarSprites.get(mob.instanceId);
       if (sprite) {
-        const barScale = scale * 0.65;
-        sprite.scale.set(barScale * 1.6, barScale * 0.1, 1);
-        sprite.position.set(renderX, 0.12, renderY);
+        sprite.position.set(renderX, HP_BAR.anchorFor(mob.isBoss ? 'boss' : 'mob') + HP_BAR.lift, renderY);
       }
       return;
     }
@@ -2019,33 +1915,46 @@ export class Game3DRenderer {
 
     if (!sprite) {
       const texture = new THREE.CanvasTexture(canvas);
-      texture.generateMipmaps = false;
-      texture.magFilter = THREE.NearestFilter;
-      texture.minFilter = THREE.NearestFilter;
-      texture.colorSpace = THREE.SRGBColorSpace;
+      this.configureHpBarTexture(texture);
 
       const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
       sprite = new THREE.Sprite(mat);
       sprite.frustumCulled = false;
+      sprite.scale.set(HP_BAR.width, HP_BAR.height, 1);
       this.entityGroup.add(sprite);
       this.mobHpBarSprites.set(mob.instanceId, sprite);
       this.mobHpBarTextures.set(mob.instanceId, { texture, lastHpBucket: hpBucket });
     } else {
       const texData = this.mobHpBarTextures.get(mob.instanceId)!;
-      const oldTex = (sprite.material as THREE.SpriteMaterial).map as THREE.CanvasTexture;
-      (sprite.material as THREE.SpriteMaterial).map = new THREE.CanvasTexture(canvas);
-      (sprite.material as THREE.SpriteMaterial).map!.generateMipmaps = false;
-      (sprite.material as THREE.SpriteMaterial).map!.magFilter = THREE.NearestFilter;
-      (sprite.material as THREE.SpriteMaterial).map!.minFilter = THREE.NearestFilter;
-      (sprite.material as THREE.SpriteMaterial).map!.colorSpace = THREE.SRGBColorSpace;
-      texData.texture = (sprite.material as THREE.SpriteMaterial).map as THREE.CanvasTexture;
+      const newTex = new THREE.CanvasTexture(canvas);
+      this.configureHpBarTexture(newTex);
+      const mat = sprite.material as THREE.SpriteMaterial;
+      const oldTex = mat.map as THREE.CanvasTexture | null;
+      mat.map = newTex;
+      texData.texture = newTex;
       if (oldTex) oldTex.dispose();
       texData.lastHpBucket = hpBucket;
     }
 
-    const barScale = scale * 0.65;
-    sprite.scale.set(barScale * 1.6, barScale * 0.1, 1);
-    sprite.position.set(renderX, 0.12, renderY);
+    sprite.scale.set(HP_BAR.width, HP_BAR.height, 1);
+    sprite.position.set(renderX, HP_BAR.anchorFor(mob.isBoss ? 'boss' : 'mob') + HP_BAR.lift, renderY);
+  }
+
+  private configureHpBarTexture(texture: THREE.CanvasTexture): void {
+    texture.generateMipmaps = false;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+  }
+
+  /** Throttled dev notice when an instanced batch hits its hard capacity. */
+  private warnBatchOverflow(batchKey: string): void {
+    const now = Date.now();
+    if (now - this.lastBatchOverflowWarn > 5000) {
+      this.lastBatchOverflowWarn = now;
+      console.warn(`[Game3DRenderer] Batch overflow for "${batchKey}": instance skipped this frame.`);
+    }
   }
 
   private cleanupMobHpBar(instanceId: string): void {
@@ -2880,6 +2789,7 @@ export class Game3DRenderer {
       this.perfStats.fpsAccum += deltaTime;
       this.perfStats.fpsFrames++;
       if (now - this.perfStats.lastFpsSample > 500) {
+        // Frames counted over ~500ms → instantaneous FPS.
         this.perfStats.fps = this.perfStats.fpsFrames / this.perfStats.fpsAccum;
         this.perfStats.fpsFrames = 0;
         this.perfStats.fpsAccum = 0;
@@ -2995,17 +2905,13 @@ export class Game3DRenderer {
           const activeAction = this.getActivePlayerAction();
 
           if (!this.playerGroup) {
-            const pScale = this.getPixelPerfectSpriteScale(false);
+            const pScale = getEntityWorldScale('player');
 
             // Canvas-composited body+head on a single 256×256 texture
             const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction);
             const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
             const tex = new THREE.CanvasTexture(compositeCanvas);
-            tex.generateMipmaps = true;
-            tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-            tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.needsUpdate = true;
+            this.applySpriteTextureFiltering(tex);
 
             const mat = new THREE.SpriteMaterial({
               map: tex,
@@ -3015,7 +2921,11 @@ export class Game3DRenderer {
             });
 
             const playerSprite = new THREE.Sprite(mat);
-            playerSprite.position.set(0, 0.5, 0);
+            // Dimensionless LOCAL offset: the group scale multiplies child
+            // positions, so this constant must be applied exactly once here.
+            // Quad center at +0.4453 (local) → authored feet row lands at y=0,
+            // same single-scale anchor as the instanced mob/NPC geometry.
+            playerSprite.position.y = QUAD_CENTER_TO_FEET_UNIT;
 
             this.playerGroup = new THREE.Group();
             this.playerGroup.add(playerSprite);
@@ -3036,11 +2946,7 @@ export class Game3DRenderer {
               const oldTex = (playerSprite.material as THREE.SpriteMaterial).map;
               if (oldTex) oldTex.dispose();
               const tex = new THREE.CanvasTexture(compositeCanvas);
-              tex.generateMipmaps = true;
-              tex.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-              tex.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
-              tex.colorSpace = THREE.SRGBColorSpace;
-              tex.needsUpdate = true;
+              this.applySpriteTextureFiltering(tex);
               (playerSprite.material as THREE.SpriteMaterial).map = tex;
               playerSprite.material.needsUpdate = true;
             }
@@ -3050,8 +2956,8 @@ export class Game3DRenderer {
           const renderPx = this.snapVal(px);
           const renderPy = this.snapVal(py);
 
-          // Update Group position and scale
-          const pScale = this.getPixelPerfectSpriteScale(false);
+          // Update Group position and scale (fixed world scale)
+          const pScale = getEntityWorldScale('player');
           this.playerGroup.scale.set(pScale, pScale, 1);
           this.playerGroup.position.set(renderPx, 0, renderPy);
           this.playerGroup.quaternion.copy(this.camera.quaternion);
@@ -3091,7 +2997,7 @@ export class Game3DRenderer {
       if (this.smoothPlayerPos && this.playerRenderParams) {
         const renderPx = this.snapVal(this.smoothPlayerPos.x);
         const renderPy = this.snapVal(this.smoothPlayerPos.y);
-        this.instancingManager.packShadowInstance(renderPx, renderPy, 0.38);
+        this.instancingManager.packShadowInstance(renderPx, renderPy, SHADOW_RADIUS.player);
       }
 
       // 2. Smooth Mobs Position Lerp & Instanced Billboard Rendering
@@ -3138,11 +3044,7 @@ export class Game3DRenderer {
             mobData.spriteUrl, mobData.glowColor, mobData.name, mobData.facing, false
           );
           atlasTexture = new THREE.CanvasTexture(atlasCanvas);
-          atlasTexture.generateMipmaps = true;
-          atlasTexture.magFilter = this.pixelPerfectEnabled ? THREE.NearestFilter : THREE.LinearFilter;
-          atlasTexture.minFilter = this.pixelPerfectEnabled ? THREE.NearestMipmapNearestFilter : THREE.LinearMipmapLinearFilter;
-          atlasTexture.colorSpace = THREE.SRGBColorSpace;
-          atlasTexture.needsUpdate = true;
+          this.applySpriteTextureFiltering(atlasTexture);
           this.atlasTextureCache.set(atlasCacheKey, atlasTexture);
 
           // Generate PBR textures for runtime-created atlas
@@ -3177,16 +3079,12 @@ export class Game3DRenderer {
 
         const renderMx = this.snapVal(smoothMob.x);
         const renderMy = this.snapVal(smoothMob.y);
-        let mScale = this.getPixelPerfectSpriteScale(mobData.isBoss);
+        // Fixed world scale from the global sizing contract. No per-frame LOD
+        // drift: distance culling + mipmapping handle far entities instead.
+        const mScale = getEntityWorldScale(mobData.isBoss ? 'boss' : 'mob');
 
-        // LOD: reduce sprite scale for distant mobs (saves fill rate)
-        if (this.currentPlayerPos) {
-          const lodDist = Math.hypot(smoothMob.x - this.currentPlayerPos.x, smoothMob.y - this.currentPlayerPos.y);
-          if (lodDist > 8) mScale *= 0.7;
-          else if (lodDist > 5) mScale *= 0.85;
-        }
-
-        this.instancingManager.addMobInstance(
+        // Returns false at batch capacity: skip instead of corrupting buffers.
+        const packed = this.instancingManager.addMobInstance(
           batchKey,
           mob,
           renderMx,
@@ -3213,10 +3111,13 @@ export class Game3DRenderer {
           },
           mobAnimFrame
         );
+        if (!packed) {
+          this.warnBatchOverflow(batchKey);
+        }
 
-        this.instancingManager.packShadowInstance(renderMx, renderMy, mobData.isBoss ? 0.75 : 0.38);
+        this.instancingManager.packShadowInstance(renderMx, renderMy, mobData.isBoss ? SHADOW_RADIUS.boss : SHADOW_RADIUS.mob);
 
-        this.updateMobHpBar(mob, renderMx, renderMy, mScale);
+        this.updateMobHpBar(mob, renderMx, renderMy);
       });
       this.mobsNeedTextureRefresh = false;
 
@@ -3225,7 +3126,7 @@ export class Game3DRenderer {
         this.npcSprites.forEach((mesh, npcId) => {
           const npc = this.currentMap!.npcs.find((n) => n.id === npcId);
           if (npc) {
-            const scale = this.getPixelPerfectSpriteScale(false);
+            const scale = getEntityWorldScale('npc');
             mesh.scale.set(scale, scale, 1);
             mesh.quaternion.copy(camQuat);
 
@@ -3233,7 +3134,7 @@ export class Game3DRenderer {
             const renderNy = this.snapVal(npc.y);
             mesh.position.set(renderNx, 0, renderNy);
 
-            this.instancingManager.packShadowInstance(renderNx, renderNy, 0.38);
+            this.instancingManager.packShadowInstance(renderNx, renderNy, SHADOW_RADIUS.npc);
           }
         });
       }
@@ -3374,8 +3275,9 @@ export class Game3DRenderer {
     this.clearDebugWireframes();
 
     // 1. Player 3D Sprite Quad Box (Green Wireframe)
-    const quadYCenter = (0.5 - 14 / 256) * 2.3;
-    const quadGeo = new THREE.BoxGeometry(2.3, 2.3, 0.05);
+    const playerScale = getEntityWorldScale('player');
+    const quadYCenter = getFeetOffsetWorld('player');
+    const quadGeo = new THREE.BoxGeometry(playerScale, playerScale, 0.05);
     const quadMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, wireframe: true });
     const quadBox = new THREE.Mesh(quadGeo, quadMat);
     quadBox.position.set(px, quadYCenter, py);
@@ -3391,7 +3293,7 @@ export class Game3DRenderer {
     this.debugWireframes.push(colBox);
 
     // 3. Player Head Top Marker (Yellow Pointer Sphere)
-    const head3DY = ((256 - 50) - 14) / 256 * 2.3;
+    const head3DY = canvasYToWorldY(50, 'player'); // canvas row 50 from top ≈ crown of head (192px above the feet line)
     const headGeo = new THREE.SphereGeometry(0.12, 8, 8);
     const headMat = new THREE.MeshBasicMaterial({ color: 0xeab308 });
     const headPoint = new THREE.Mesh(headGeo, headMat);
@@ -3403,8 +3305,8 @@ export class Game3DRenderer {
     this.currentActiveMobs.forEach((mob) => {
       const mobData = this.mobRenderParams.get(mob.instanceId);
       const isBoss = mobData?.isBoss;
-      const mSize = isBoss ? 3.5 : 2.3;
-      const mQuadYCenter = (0.5 - 14 / 256) * mSize;
+      const mSize = getEntityWorldScale(isBoss ? 'boss' : 'mob');
+      const mQuadYCenter = getFeetOffsetWorld(isBoss ? 'boss' : 'mob');
 
       const mQuadGeo = new THREE.BoxGeometry(mSize, mSize, 0.05);
       const mQuadMat = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true });
@@ -3674,6 +3576,12 @@ export class Game3DRenderer {
     this.perfStats.spriteTextureMisses = 0;
     this.perfStats.pbrTextureMisses = 0;
     this.perfStats.hpBarUpdates = 0;
+    // Restart the FPS sampling window so the next stat is representative.
+    this.perfStats.fpsFrames = 0;
+    this.perfStats.fpsAccum = 0;
+    this.perfStats.fps = 0;
+    this.perfStats.lastFpsSample = 0;
+    this.lastFrameTime = 0;
   }
 
   public destroy() {
@@ -3704,6 +3612,12 @@ export class Game3DRenderer {
     this.spriteTextureCache.clear();
     this.atlasTextureCache.forEach((tex) => tex.dispose());
     this.atlasTextureCache.clear();
+    this.atlasPBRCache.forEach((pbr) => {
+      pbr.normalTexture.dispose();
+      pbr.roughnessTexture.dispose();
+      pbr.metalnessTexture.dispose();
+    });
+    this.atlasPBRCache.clear();
     this.pbrGenerator.clearCaches();
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
