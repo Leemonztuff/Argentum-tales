@@ -1401,8 +1401,13 @@ export class Game3DRenderer {
         ? Math.max(1, Math.floor(targetMaxDim / maxDim))
         : (targetMaxDim / maxDim);
 
-      let destW = Math.floor(srcW * scale);
-      let destH = Math.floor(srcH * scale);
+      // FIX: Compute destination dimensions from FULL frame cell (constant), not from
+      // per-frame crop (variable). Different animation frames have different silhouettes
+      // → different crop heights → variable destH → vertical wobble. By computing destW/destH
+      // from the full frame cell, all frames produce identical dimensions, eliminating wobble.
+      // The crop content is then centered within the fixed destination rect.
+      let destW = Math.floor(frameW * scale);
+      let destH = Math.floor(frameH * scale);
 
       if (destH > SPRITE_LAYOUT.bodyMax) {
         const ratio = SPRITE_LAYOUT.bodyMax / destH;
@@ -1421,44 +1426,70 @@ export class Game3DRenderer {
 
       debugDestX = destX;
       debugDestY = destY;
-      debugDestW = srcW;
-      debugDestH = srcH;
+      debugDestW = destW;
+      debugDestH = destH;
 
       // Draw original sprite artwork WITHOUT shadow blur so pixels remain 100% crisp and unpolluted.
       // The body layer is chroma-keyed into its own canvas here so that the layering below
       // can safely composite overlays (head/armor sheets that are also magenta-JPEGs) on top of
       // it without their magenta background covering the body.
+      //
+      // The crop content is centered within the fixed dest rect so that different crop sizes
+      // across frames don't shift the sprite position.
       const bodyGhostAlpha = ctx.globalAlpha;
       ctx.globalAlpha = 1;
-      const bodyLayer = drawLayerWithMagentaKey(img, srcX, srcY, srcW, srcH, 0, 0, destW, destH, bodyGhostAlpha);
+      const drawW = Math.floor(srcW * scale);
+      const drawH = Math.floor(srcH * scale);
+      const drawX = Math.floor((destW - drawW) / 2);
+      const drawY = Math.floor((destH - drawH) / 2);
+      const bodyLayer = document.createElement('canvas');
+      bodyLayer.width = Math.max(1, Math.ceil(destW));
+      bodyLayer.height = Math.max(1, Math.ceil(destH));
+      const blCtx = bodyLayer.getContext('2d')!;
+      blCtx.imageSmoothingEnabled = false;
+      blCtx.globalAlpha = bodyGhostAlpha;
+      blCtx.drawImage(img, srcX, srcY, srcW, srcH, drawX, drawY, drawW, drawH);
+      blCtx.globalAlpha = 1;
+      applyMagentaKeyToCanvas(bodyLayer);
       ctx.drawImage(bodyLayer, destX, destY);
 
       // Apply overlays (e.g. head on top of body). Overlay sheets share the same grid/frame
-      // size, so the matching cell is drawn at the same dest rect. The same content crop is
-      // applied to the overlay source so head and body stay aligned. Each overlay is its own
-      // chroma-keyed layer so only its real pixels are drawn over the body.
+      // size, so the matching cell is drawn at the same dest rect. Each overlay computes its
+      // own content bounds independently (may differ from the body's crop) and is centered
+      // within the same fixed dest rect. Each overlay is its own chroma-keyed layer so only
+      // its real pixels are drawn over the body.
       for (const overlayUrl of overlaySpriteUrls) {
         const overlayImg = overlayUrl ? this.getOrLoadImage(overlayUrl) : null;
         if (!overlayImg) continue;
         const oFrameW = Math.floor(overlayImg.width / 4);
         const oFrameH = Math.floor(overlayImg.height / 4);
-        const oSx = Math.floor((animFrame % 4) * oFrameW) + (frameCrop ? frameCrop.x : 0);
-        let oSy = Math.floor(0 * oFrameH) + (frameCrop ? frameCrop.y : 0);
-        if (facing === 'left') oSy = Math.floor(1 * oFrameH) + (frameCrop ? frameCrop.y : 0);
-        else if (facing === 'right') oSy = Math.floor(2 * oFrameH) + (frameCrop ? frameCrop.y : 0);
-        else if (facing === 'up') oSy = Math.floor(3 * oFrameH) + (frameCrop ? frameCrop.y : 0);
-        const overlayLayer = drawLayerWithMagentaKey(
-          overlayImg,
-          oSx,
-          oSy,
-          srcW,
-          srcH,
-          0,
-          0,
-          destW,
-          destH,
-          bodyGhostAlpha
-        );
+        const oSx = Math.floor((animFrame % 4) * oFrameW);
+        let oSy = Math.floor(0 * oFrameH);
+        if (facing === 'left') oSy = Math.floor(1 * oFrameH);
+        else if (facing === 'right') oSy = Math.floor(2 * oFrameH);
+        else if (facing === 'up') oSy = Math.floor(3 * oFrameH);
+
+        // Each overlay detects its own content bounds (not reusing body's crop)
+        const oCrop = getNonEmptyBounds(overlayImg, oSx, oSy, oFrameW, oFrameH);
+        const oSrcX = oCrop ? oSx + oCrop.x : oSx;
+        const oSrcY = oCrop ? oSy + oCrop.y : oSy;
+        const oSrcW = oCrop ? oCrop.w : oFrameW;
+        const oSrcH = oCrop ? oCrop.h : oFrameH;
+
+        // Center overlay crop within the same fixed dest rect as the body
+        const oDrawW = Math.floor(oSrcW * scale);
+        const oDrawH = Math.floor(oSrcH * scale);
+        const oDrawX = Math.floor((destW - oDrawW) / 2);
+        const oDrawY = Math.floor((destH - oDrawH) / 2);
+        const overlayLayer = document.createElement('canvas');
+        overlayLayer.width = Math.max(1, Math.ceil(destW));
+        overlayLayer.height = Math.max(1, Math.ceil(destH));
+        const olCtx = overlayLayer.getContext('2d')!;
+        olCtx.imageSmoothingEnabled = false;
+        olCtx.globalAlpha = bodyGhostAlpha;
+        olCtx.drawImage(overlayImg, oSrcX, oSrcY, oSrcW, oSrcH, oDrawX, oDrawY, oDrawW, oDrawH);
+        olCtx.globalAlpha = 1;
+        applyMagentaKeyToCanvas(overlayLayer);
         ctx.drawImage(overlayLayer, destX, destY);
       }
       ctx.globalAlpha = bodyGhostAlpha;
@@ -1587,15 +1618,29 @@ export class Game3DRenderer {
       ? Math.max(1, Math.floor(bodyTargetMax / bodyMaxDim))
       : (bodyTargetMax / bodyMaxDim);
 
-    let bodyDestW = Math.floor(bodySrcW * bodyScale);
-    let bodyDestH = Math.floor(bodySrcH * bodyScale);
+    // FIX: Compute destination dimensions from FULL frame cell (constant), not from
+    // per-frame crop (variable). Different animation frames have different silhouettes
+    // → different crop heights → variable bodyDestH → variable head position → head wobble.
+    let bodyDestW = Math.floor(bodyFrameW * bodyScale);
+    let bodyDestH = Math.floor(bodyFrameH * bodyScale);
     if (bodyDestH > SPRITE_LAYOUT.bodyMax) { const r = SPRITE_LAYOUT.bodyMax / bodyDestH; bodyDestH = SPRITE_LAYOUT.bodyMax; bodyDestW = Math.floor(bodyDestW * r); }
     if (bodyDestW > SPRITE_LAYOUT.maxBodyWidth) { const r = SPRITE_LAYOUT.maxBodyWidth / bodyDestW; bodyDestW = SPRITE_LAYOUT.maxBodyWidth; bodyDestH = Math.floor(bodyDestH * r); }
 
     const bodyDestX = Math.floor((SPRITE_CANVAS - bodyDestW) / 2);
     const bodyDestY = Math.max(SPRITE_LAYOUT.topMargin, Math.floor(SPRITE_LAYOUT.feet - bodyDestH));
 
-    const bodyLayer = drawLayerWithMagentaKey(bodyImg, bodySrcX, bodySrcY, bodySrcW, bodySrcH, 0, 0, bodyDestW, bodyDestH, 1);
+    // Draw body crop centered within the fixed-size destination rect
+    const bodyDrawW = Math.floor(bodySrcW * bodyScale);
+    const bodyDrawH = Math.floor(bodySrcH * bodyScale);
+    const bodyDrawX = Math.floor((bodyDestW - bodyDrawW) / 2);
+    const bodyDrawY = Math.floor((bodyDestH - bodyDrawH) / 2);
+    const bodyLayer = document.createElement('canvas');
+    bodyLayer.width = Math.max(1, Math.ceil(bodyDestW));
+    bodyLayer.height = Math.max(1, Math.ceil(bodyDestH));
+    const blCtx = bodyLayer.getContext('2d')!;
+    blCtx.imageSmoothingEnabled = false;
+    blCtx.drawImage(bodyImg, bodySrcX, bodySrcY, bodySrcW, bodySrcH, bodyDrawX, bodyDrawY, bodyDrawW, bodyDrawH);
+    applyMagentaKeyToCanvas(bodyLayer);
     ctx.drawImage(bodyLayer, bodyDestX, bodyDestY);
 
     // --- HEAD LAYER ---
@@ -1621,10 +1666,12 @@ export class Game3DRenderer {
     const shoulderRatio = Game3DRenderer.SHOULDER_RATIOS[rowIdx];
     const chinRatio = Game3DRenderer.CHIN_RATIOS[rowIdx];
 
-    // Head scale from calibration relative to body dest width (never exceeds canvas)
-    const headContentAspect = headSrcW / headSrcH;
+    // FIX: Compute head dimensions from FULL head frame cell (constant), not from
+    // per-frame crop (variable). Using the crop's aspect ratio makes the head grow/shrink
+    // across frames. The full frame provides a stable aspect ratio and base size.
+    const headFullAspect = headFrameW / headFrameH;
     const headDestW = Math.min(SPRITE_CANVAS, Math.round(bodyDestW * calib.scaleRatio));
-    const headDestH = Math.round(headDestW / headContentAspect);
+    const headDestH = Math.round(headDestW / headFullAspect);
 
     // Horizontal: centered + directional offset + calibration offsetX (clamped in-canvas)
     const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
@@ -1638,7 +1685,18 @@ export class Game3DRenderer {
     const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
     const headDestY = Math.round(shoulderY + overlap - (chinRatio * headDestH) + calib.offsetY);
 
-    const headLayer = drawLayerWithMagentaKey(headImg, headSrcX, headSrcY, headSrcW, headSrcH, 0, 0, headDestW, headDestH, 1);
+    // Draw head crop centered within the fixed-size head destination rect
+    const headDrawW = Math.round(headSrcW * (headDestW / headFrameW));
+    const headDrawH = Math.round(headSrcH * (headDestH / headFrameH));
+    const headDrawX = Math.floor((headDestW - headDrawW) / 2);
+    const headDrawY = Math.floor((headDestH - headDrawH) / 2);
+    const headLayer = document.createElement('canvas');
+    headLayer.width = Math.max(1, Math.ceil(headDestW));
+    headLayer.height = Math.max(1, Math.ceil(headDestH));
+    const hlCtx = headLayer.getContext('2d')!;
+    hlCtx.imageSmoothingEnabled = false;
+    hlCtx.drawImage(headImg, headSrcX, headSrcY, headSrcW, headSrcH, headDrawX, headDrawY, headDrawW, headDrawH);
+    applyMagentaKeyToCanvas(headLayer);
     ctx.drawImage(headLayer, headDestX, headDestY);
 
     // AUTO-FIT (safe-frame): aggressive calibration or large heads can push the
