@@ -127,6 +127,34 @@ export function getEntityWorldScale(kind: EntityKind): number {
   return QUAD_WORLD_HEIGHT * ENTITY_SCALE[kind];
 }
 
+/**
+ * Formal anchor contract for all sprite billboards.
+ * Every entity type must satisfy this contract to land feet-on-ground.
+ * Use this to verify that a billboard is correctly positioned: the quad
+ * center world Y must equal feetOffsetWorld for the entity kind.
+ */
+export interface SpriteAnchorContract {
+  /** World Y where the billboard quad center sits so feet land at y=0. */
+  readonly feetOffsetWorld: number;
+  /** World scale multiplier for this entity kind. */
+  readonly worldScale: number;
+  /** Canvas Y (from top) where the feet line is authored. */
+  readonly feetCanvasY: number;
+}
+
+/**
+ * Returns the anchor contract for an entity kind.
+ * Callers (renderer, instancing manager) should verify their billboard
+ * positioning against this contract to prevent floating or buried feet.
+ */
+export function getAnchorContract(kind: EntityKind): SpriteAnchorContract {
+  return {
+    feetOffsetWorld: getFeetOffsetWorld(kind),
+    worldScale: getEntityWorldScale(kind),
+    feetCanvasY: SPRITE_LAYOUT.feet,
+  };
+}
+
 /** Convert a world-unit height into authored canvas pixels. */
 export function worldToCanvas(worldHeight: number): number {
   return (worldHeight / ENTITY_BASE_WORLD_HEIGHT) * bodyCanvasHeight;

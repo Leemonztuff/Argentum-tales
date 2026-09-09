@@ -16,6 +16,8 @@ import {
   getFeetOffsetWorld,
   canvasYToWorldY,
   worldToCanvas,
+  getAnchorContract,
+  SpriteAnchorContract,
 } from '../../engine/worldScale';
 
 const KINDS: EntityKind[] = ['player', 'npc', 'mob', 'boss'];
@@ -94,5 +96,49 @@ describe('worldScale layout contract', () => {
     // for heights measured from the feet line.
     const worldH = canvasYToWorldY(headTopY, 'player');
     expect(worldToCanvas(worldH)).toBeCloseTo(bodyCanvasHeight, 6);
+  });
+
+  // --- Canvas layout invariants ---
+
+  it('SPRITE_CANVAS is exactly 256 (guard against accidental resize)', () => {
+    expect(SPRITE_CANVAS).toBe(256);
+  });
+
+  it('SPRITE_LAYOUT.feet is within the canvas and above center', () => {
+    expect(SPRITE_LAYOUT.feet).toBeGreaterThan(SPRITE_CANVAS / 2);
+    expect(SPRITE_LAYOUT.feet).toBeLessThan(SPRITE_CANVAS);
+  });
+
+  it('body fits entirely between topMargin and feet line', () => {
+    expect(SPRITE_LAYOUT.topMargin + SPRITE_LAYOUT.bodyMax).toBeLessThanOrEqual(SPRITE_LAYOUT.feet);
+  });
+
+  // --- SpriteAnchorContract tests ---
+
+  it.each(KINDS)('%s: getAnchorContract feetOffsetWorld matches getFeetOffsetWorld', (kind) => {
+    const contract = getAnchorContract(kind);
+    expect(contract.feetOffsetWorld).toBeCloseTo(getFeetOffsetWorld(kind), 12);
+  });
+
+  it.each(KINDS)('%s: getAnchorContract worldScale matches getEntityWorldScale', (kind) => {
+    const contract = getAnchorContract(kind);
+    expect(contract.worldScale).toBeCloseTo(getEntityWorldScale(kind), 12);
+  });
+
+  it.each(KINDS)('%s: getAnchorContract feetCanvasY matches SPRITE_LAYOUT.feet', (kind) => {
+    const contract = getAnchorContract(kind);
+    expect(contract.feetCanvasY).toBe(SPRITE_LAYOUT.feet);
+  });
+
+  it.each(KINDS)('%s: feet-on-ground invariant — feetOffsetWorld > 0', (kind) => {
+    const contract = getAnchorContract(kind);
+    expect(contract.feetOffsetWorld).toBeGreaterThan(0);
+  });
+
+  it('anchor contracts preserve entity ordering: boss > player = npc > mob', () => {
+    const c = (k: EntityKind): SpriteAnchorContract => getAnchorContract(k);
+    expect(c('boss').feetOffsetWorld).toBeGreaterThan(c('player').feetOffsetWorld);
+    expect(c('player').feetOffsetWorld).toBeCloseTo(c('npc').feetOffsetWorld, 12);
+    expect(c('mob').feetOffsetWorld).toBeLessThan(c('player').feetOffsetWorld);
   });
 });

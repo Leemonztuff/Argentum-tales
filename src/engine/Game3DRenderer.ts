@@ -1345,12 +1345,12 @@ export class Game3DRenderer {
   ): HTMLCanvasElement {
     const isPixelMode = this.pixelPerfectEnabled;
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
+    canvas.width = SPRITE_CANVAS;
+    canvas.height = SPRITE_CANVAS;
     const ctx = canvas.getContext('2d')!;
 
     // Transparent background
-    ctx.clearRect(0, 0, 256, 256);
+    ctx.clearRect(0, 0, SPRITE_CANVAS, SPRITE_CANVAS);
 
     if (isGhost) {
       ctx.globalAlpha = 0.45;
@@ -1471,7 +1471,7 @@ export class Game3DRenderer {
       ctx.font = '96px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(emojiOrIcon, 128, 120);
+      ctx.fillText(emojiOrIcon, SPRITE_CANVAS / 2, 120);
     }
 
     // Label on top (positioned cleanly above head at y = 22 with 28px clearance to head)
@@ -1489,7 +1489,7 @@ export class Game3DRenderer {
       ctx.save();
       ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 3;
-      ctx.strokeRect(0, 0, 256, 256);
+      ctx.strokeRect(0, 0, SPRITE_CANVAS, SPRITE_CANVAS);
 
       ctx.strokeStyle = '#22c55e';
       ctx.lineWidth = 2;
@@ -1499,7 +1499,7 @@ export class Game3DRenderer {
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(0, debugDestY);
-      ctx.lineTo(256, debugDestY);
+      ctx.lineTo(SPRITE_CANVAS, debugDestY);
       ctx.stroke();
 
       ctx.strokeStyle = '#06b6d4';
@@ -1510,15 +1510,15 @@ export class Game3DRenderer {
 
       ctx.strokeStyle = '#f97316';
       ctx.beginPath();
-      ctx.moveTo(0, 22);
-      ctx.lineTo(256, 22);
+      ctx.moveTo(0, SPRITE_LAYOUT.labelY);
+      ctx.lineTo(SPRITE_CANVAS, SPRITE_LAYOUT.labelY);
       ctx.stroke();
 
       ctx.setLineDash([]);
       ctx.fillStyle = '#ef4444';
       ctx.font = 'bold 12px monospace';
       ctx.textAlign = 'left';
-      ctx.fillText(`CANVAS 256x256`, 6, 16);
+      ctx.fillText(`CANVAS ${SPRITE_CANVAS}x${SPRITE_CANVAS}`, 6, 16);
       ctx.fillStyle = '#22c55e';
       ctx.fillText(`DRAW: [${debugDestX},${debugDestY},${debugDestW},${debugDestH}]`, 6, 32);
       ctx.restore();
@@ -1544,10 +1544,10 @@ export class Game3DRenderer {
     action?: PlayerAction
   ): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
+    canvas.width = SPRITE_CANVAS;
+    canvas.height = SPRITE_CANVAS;
     const ctx = canvas.getContext('2d')!;
-    ctx.clearRect(0, 0, 256, 256);
+    ctx.clearRect(0, 0, SPRITE_CANVAS, SPRITE_CANVAS);
 
     const calib = getHeadCalibration();
     const isPixelMode = this.pixelPerfectEnabled;
