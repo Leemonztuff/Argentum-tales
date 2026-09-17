@@ -37,7 +37,7 @@ export const DEFAULT_HEAD_CALIBRATION: HeadCalibrationConfig = {
   // off-canvas anymore — the safe-frame clamp keeps it visible).
   offsetY: -15,
   offsetX: 0,
-  // scaleRatio: multiplier on the chibi head ratio (0.35 base → 1.2 ≈ 0.42 body).
+  // scaleRatio: multiplier on the chibi head ratio (0.4375 base → 1.2 ≈ 0.52 body).
   scaleRatio: 1.2,
   overlap: 4,
 };
@@ -75,6 +75,11 @@ export function setHeadCalibration(config: Partial<HeadCalibrationConfig>): void
   activeRenderers.forEach((renderer) => {
     renderer.invalidateAllCharacterSprites();
   });
+}
+
+export function getActiveRenderer(): Game3DRenderer | null {
+  for (const renderer of activeRenderers) return renderer;
+  return null;
 }
 
 // Magenta/fuchsia chroma-key: pixels close to (255, 0, 255) become transparent.
@@ -558,6 +563,19 @@ export class Game3DRenderer {
     headUrl: string;
   } | null = null;
   private playerNeedsTextureRefresh: boolean = false;
+
+  /** Public view of the player's current sheet/facing (for live previews, debug). */
+  public getPlayerRenderParams():
+    | { spriteUrl: string; headUrl: string; facing: 'up' | 'down' | 'left' | 'right' }
+    | null {
+    return this.playerRenderParams
+      ? {
+          spriteUrl: this.playerRenderParams.spriteUrl,
+          headUrl: this.playerRenderParams.headUrl,
+          facing: this.playerRenderParams.facing,
+        }
+      : null;
+  }
   private playerCompositeKey: string = '';
   private playerWalkDistance: number = 0;
   private playerLastAnimFrame: number = -1;
@@ -1680,8 +1698,8 @@ export class Game3DRenderer {
   }
 
   // Head overlay sizing: chibi ratio of the DRAWN body height, identical in all
-  // 4 views. Effective ratio = BASE × calib.scaleRatio (default 1.2 → ~0.42).
-  private static readonly HEAD_BODY_RATIO_BASE = 0.35;
+  // 4 views. Effective ratio = BASE × calib.scaleRatio (default 1.2 → ~0.52).
+  private static readonly HEAD_BODY_RATIO_BASE = 0.4375;
 
   /**
    * Composites body + head spritesheets onto a single 256×256 canvas.
