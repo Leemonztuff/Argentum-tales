@@ -1809,19 +1809,33 @@ export class Game3DRenderer {
     const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
     const headDestY = Math.round(shoulderY + overlap - (chinRatio * headDestH) + calib.offsetY);
 
+    // FIX: never let the head overlay fall off the top of the canvas (large-cell
+    // sheets make headDestW big, which pushes the crown far above y=0 and then
+    // the AUTO-FIT shrinks the whole composite into a small box). Scale the head
+    // down about its CHIN (which stays on the neck line) so the full crown fits.
+    let headFitW = headDestW;
+    let headFitH = headDestH;
+    let headFitY = headDestY;
+    if (headFitY < 0) {
+      const k = Math.max(0.25, (headFitY + headFitH) / headFitH);
+      headFitW = Math.max(8, Math.round(headDestW * k));
+      headFitH = Math.max(8, Math.round(headDestH * k));
+      headFitY = Math.round(headDestY + (headDestH - headFitH));
+    }
+
     // Draw head crop centered within the fixed-size head destination rect
-    const headDrawW = Math.round(headSrcW * (headDestW / headFrameW));
-    const headDrawH = Math.round(headSrcH * (headDestH / headFrameH));
-    const headDrawX = Math.floor((headDestW - headDrawW) / 2);
-    const headDrawY = Math.floor((headDestH - headDrawH) / 2);
+    const headDrawW = Math.round(headSrcW * (headFitW / headFrameW));
+    const headDrawH = Math.round(headSrcH * (headFitH / headFrameH));
+    const headDrawX = Math.floor((headFitW - headDrawW) / 2);
+    const headDrawY = Math.floor((headFitH - headDrawH) / 2);
     const headLayer = document.createElement('canvas');
-    headLayer.width = Math.max(1, Math.ceil(headDestW));
-    headLayer.height = Math.max(1, Math.ceil(headDestH));
+    headLayer.width = Math.max(1, Math.ceil(headFitW));
+    headLayer.height = Math.max(1, Math.ceil(headFitH));
     const hlCtx = headLayer.getContext('2d')!;
     hlCtx.imageSmoothingEnabled = false;
     hlCtx.drawImage(headImg, headSrcX, headSrcY, headSrcW, headSrcH, headDrawX, headDrawY, headDrawW, headDrawH);
     applyMagentaKeyToCanvas(headLayer);
-    ctx.drawImage(headLayer, headDestX, headDestY);
+    ctx.drawImage(headLayer, headDestX, headFitY);
 
     // AUTO-FIT (safe-frame): aggressive calibration or large heads can push the
     // composite above the label-clearance line (or off-canvas), cutting the
