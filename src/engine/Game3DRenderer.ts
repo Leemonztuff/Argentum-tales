@@ -33,8 +33,11 @@ export interface HeadCalibrationConfig {
 }
 
 export const DEFAULT_HEAD_CALIBRATION: HeadCalibrationConfig = {
+  // offsetY: nudges the head DOWN only (negative values can't push the crown
+  // off-canvas anymore — the safe-frame clamp keeps it visible).
   offsetY: -15,
   offsetX: 0,
+  // scaleRatio: multiplier on the chibi head ratio (0.35 base → 1.2 ≈ 0.42 body).
   scaleRatio: 1.2,
   overlap: 4,
 };
@@ -1676,9 +1679,9 @@ export class Game3DRenderer {
     return canvas;
   }
 
-  // Per-direction anatomical ratios for head placement on body
-  private static readonly SHOULDER_RATIOS = [0.091, 0.129, 0.129, 0.106]; // down, left, right, up
-  private static readonly CHIN_RATIOS = [0.940, 0.965, 0.970, 0.990];    // down, left, right, up
+  // Head overlay sizing: chibi ratio of the DRAWN body height, identical in all
+  // 4 views. Effective ratio = BASE × calib.scaleRatio (default 1.2 → ~0.42).
+  private static readonly HEAD_BODY_RATIO_BASE = 0.35;
 
   /**
    * Composites body + head spritesheets onto a single 256×256 canvas.
@@ -1786,76 +1789,42 @@ export class Game3DRenderer {
     const headSrcW = headCrop ? headCrop.w : headFrameW;
     const headSrcH = headCrop ? headCrop.h : headFrameH;
 
-    const rowIdx = bodyRow;
-    const shoulderRatio = Game3DRenderer.SHOULDER_RATIOS[rowIdx];
-    const chinRatio = Game3DRenderer.CHIN_RATIOS[rowIdx];
-
-    // FIX: Compute head dimensions from FULL head frame cell (constant), not from
-    // per-frame crop (variable). Using the crop's aspect ratio makes the head grow/shrink
-    // across frames. The full frame provides a stable aspect ratio and base size.
+    // HEAD: single content-anchored model (no per-direction ratio tables).
+    // The headless body crop begins at the neck; the chin rests on it with a
+    // small overlap and the size is a fixed chibi ratio of the drawn body height.
     const headFullAspect = headFrameW / headFrameH;
-    const headDestW = Math.min(SPRITE_CANVAS, Math.round(bodyDestW * calib.scaleRatio));
-    const headDestH = Math.round(headDestW / headFullAspect);
+    const neckY = bodyDestY + bodyDrawY;
+    const chinY = neckY + calib.overlap;
+    let headH = Math.max(8, Math.round(bodyDrawH * Game3DRenderer.HEAD_BODY_RATIO_BASE * calib.scaleRatio));
+    let headW = Math.max(8, Math.round(headH * headFullAspect));
 
-    // Vertical: shoulder position + overlap - chin ratio + calibration offsetY
-    const shoulderY = bodyDestY + Math.round(shoulderRatio * bodyDestH);
-    const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
-    const headDestY = Math.round(shoulderY + overlap - (chinRatio * headDestH) + calib.offsetY);
-
-    // FIX: never let the head overlay fall off the top of the canvas (large-cell
-    // sheets make headDestW big, which pushes the crown far above y=0 and then
-    // the AUTO-FIT shrinks the whole composite into a small box). Scale the head
-    // down about its CHIN (which stays on the neck line) so the full crown fits.
-    let headFitW = headDestW;
-    let headFitH = headDestH;
-    let headFitY = headDestY;
-    if (headFitY < 0) {
-      const k = Math.max(0.25, (headFitY + headFitH) / headFitH);
-      headFitW = Math.max(8, Math.round(headDestW * k));
-      headFitH = Math.max(8, Math.round(headDestH * k));
-      headFitY = Math.round(headDestY + (headDestH - headFitH));
-    }
-
-    // FIX: also keep the DRAWN crown clear of the canvas top. A head that hugs
-    // the billboard edge (soft hair AA clipped by the sprite alphaTest) reads as
-    // a "cut crown". With the chin anchored on the neck line, cap the head height
-    // so its crown lands exactly on the safe-frame line; the composite then never
-    // triggers AUTO-FIT.
-    const headCropFraction = Math.max(0, Math.min(1, headSrcH / headFrameH));
-    const headCrownInset = Math.max(0, (1 - headCropFraction) / 2);
-    const headBottom = headFitY + headFitH;
-    const headCrownTop = headFitY + Math.round(headFitH * headCrownInset);
-    if (headCrownTop < SPRITE_LAYOUT.topMargin) {
-      const maxH = Math.max(
-        8,
-        Math.round((headBottom - SPRITE_LAYOUT.topMargin) / Math.max(0.05, 1 - headCrownInset))
-      );
-      const k = Math.max(0.25, maxH / headFitH);
-      headFitH = Math.max(8, Math.round(headFitH * k));
-      headFitW = Math.max(8, Math.round(headFitW * k));
-      headFitY = Math.max(0, headBottom - headFitH);
-    }
-
-    // Horizontal: centered + directional offset + calibration offsetX (clamped in-canvas)
-    const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
-    const headDestX = Math.min(
-      SPRITE_CANVAS - headFitW,
-      Math.max(0, Math.round((SPRITE_CANVAS - headFitW) / 2) + dirOffsetX + calib.offsetX)
+    // Single fit: crown never climbs above the safe-frame line (offsetY only
+    // nudges down; negative values can never push the crown off-canvas again).
+    let headDestY = Math.max(
+      SPRITE_LAYOUT.topMargin,
+      Math.round(chinY - headH + calib.offsetY)
     );
 
-    // Draw head crop centered within the (final) fitted head destination rect
-    const headDrawW = Math.round(headSrcW * (headFitW / headFrameW));
-    const headDrawH = Math.round(headSrcH * (headFitH / headFrameH));
-    const headDrawX = Math.floor((headFitW - headDrawW) / 2);
-    const headDrawY = Math.floor((headFitH - headDrawH) / 2);
+    // Horizontal: centered + small directional offset + calibration offsetX (clamped in-canvas)
+    const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
+    const headDestX = Math.min(
+      SPRITE_CANVAS - headW,
+      Math.max(0, Math.round((SPRITE_CANVAS - headW) / 2) + dirOffsetX + calib.offsetX)
+    );
+
+    // Draw head crop centered within the head destination rect
+    const headDrawW = Math.round(headSrcW * (headW / headFrameW));
+    const headDrawH = Math.round(headSrcH * (headH / headFrameH));
+    const headDrawX = Math.floor((headW - headDrawW) / 2);
+    const headDrawY = Math.floor((headH - headDrawH) / 2);
     const headLayer = document.createElement('canvas');
-    headLayer.width = Math.max(1, Math.ceil(headFitW));
-    headLayer.height = Math.max(1, Math.ceil(headFitH));
+    headLayer.width = Math.max(1, Math.ceil(headW));
+    headLayer.height = Math.max(1, Math.ceil(headH));
     const hlCtx = headLayer.getContext('2d')!;
     hlCtx.imageSmoothingEnabled = false;
     hlCtx.drawImage(headImg, headSrcX, headSrcY, headSrcW, headSrcH, headDrawX, headDrawY, headDrawW, headDrawH);
     applyMagentaKeyToCanvas(headLayer);
-    ctx.drawImage(headLayer, headDestX, headFitY);
+    ctx.drawImage(headLayer, headDestX, headDestY);
 
     // AUTO-FIT (safe-frame): aggressive calibration or large heads can push the
     // composite above the label-clearance line (or off-canvas), cutting the
