@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GameMap, PlayerCharacter, ActiveMob, FloatingText, SelectedTarget, NPC } from '../types/game';
 import { MOBS } from '../data/mobs';
-import { SPRITESHEETS, CLASS_SPRITES, NPC_SPRITES, DEFAULT_MOB_SPRITE, DEFAULT_NPC_SPRITE, BODY_SPRITES, HEAD_SPRITES } from '../data/spritesheets';
+import { SPRITESHEETS, CLASS_SPRITES, NPC_SPRITES, DEFAULT_MOB_SPRITE, DEFAULT_NPC_SPRITE, BODY_SPRITES, HEAD_SPRITES, NEW_BODY_SPRITES, ARMOR_BODY_SPRITES, NEW_NPC_SPRITES } from '../data/spritesheets';
 import { PLAYER_ACTION_SPRITES, PlayerAction } from '../data/spritesheets';
 import { AssetLoader } from './AssetLoader';
 import { EnvironmentGenerator } from './EnvironmentGenerator';
@@ -1251,7 +1251,7 @@ export class Game3DRenderer {
     // Build NPCs with pixel-perfect scaling, crisp alpha-test, normal maps, and billboard rendering
     this.npcSprites.clear();
     map.npcs.forEach((npc) => {
-      const npcUrl = NPC_SPRITES[npc.id] || DEFAULT_NPC_SPRITE;
+      const npcUrl = NEW_NPC_SPRITES[npc.id] || NPC_SPRITES[npc.id] || DEFAULT_NPC_SPRITE;
       const spriteTextures = this.getOrCreateSpriteTextures(
         npc.sprite,
         npc.color,
@@ -2052,7 +2052,7 @@ export class Game3DRenderer {
     // 1. Cache Player Render Parameters
     const playerIcon = player.classType === 'guerrero' ? '🛡️🗡️' : player.classType === 'cazador' ? '🏹🧝' : player.classType === 'mago' ? '🧙‍♂️✨' : '🗡️🥷';
     const playerGlow = player.classType === 'mago' ? '#38bdf8' : player.classType === 'picaro' ? '#a855f7' : player.classType === 'guerrero' ? '#eab308' : '#22c55e';
-    const playerUrl = BODY_SPRITES[player.classType] || BODY_SPRITES.humano02 || CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
+    const playerUrl = (player.equipment.armor && ARMOR_BODY_SPRITES[player.equipment.armor.id]) || NEW_BODY_SPRITES[player.classType] || BODY_SPRITES[player.classType] || BODY_SPRITES.humano02 || CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
     const playerHeadUrl = HEAD_SPRITES.head_humano02;
 
     const newPlayerParams = {

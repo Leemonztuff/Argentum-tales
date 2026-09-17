@@ -45,6 +45,31 @@ export const BODY_SPRITES: Record<string, string> = {
   picaro: `${NORMALIZED_BODY}/Picaro/spritesheet_01.normalized.png`,
 };
 
+// Nuevos bodies WebP (4x4, 1295x1295, sin cabeza). Seleccion por clase.
+const NEW_BODY = '/spritesheets/Armor';
+const NEW_CLOTHES = '/spritesheets/Clothes';
+export const NEW_BODY_SPRITES: Record<string, string> = {
+  novicio: `${NEW_CLOTHES}/frame_015.webp`,
+  guerrero: `${NEW_BODY}/frame_000.webp`,
+  cazador: `${NEW_CLOTHES}/archer_005.webp`,
+  mago: `${NEW_CLOTHES}/druid_061.webp`,
+  picaro: `${NEW_CLOTHES}/assasin_065.webp`,
+};
+
+// Body WebP por armadura equipada (fallback: sprite de la clase).
+export const ARMOR_BODY_SPRITES: Record<string, string> = {
+  tunica_lino: `${NEW_CLOTHES}/frame_015.webp`,
+  armadura_cuero: `${NEW_BODY}/frame_000.webp`,
+  cota_malla: `${NEW_BODY}/frame_007.webp`,
+  armadura_placas: `${NEW_BODY}/frame_010.webp`,
+};
+
+// NPC WebP de ejemplo (2 de los 11 disponibles).
+export const NEW_NPC_SPRITES: Record<string, string> = {
+  sabio_elias: '/spritesheets/Npc-00.webp',
+  herrero_boris: '/spritesheets/Npc-01.webp',
+};
+
 export const HEAD_SPRITES: Record<string, string> = {
   head_humano02: '/players/Jobs/base_head_spritesheet.png',
   head_humano02_hairtyle01: '/players/Jobs/base_head_spritesheet.png',
