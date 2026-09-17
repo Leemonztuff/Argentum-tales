@@ -2052,7 +2052,14 @@ export class Game3DRenderer {
     // 1. Cache Player Render Parameters
     const playerIcon = player.classType === 'guerrero' ? '🛡️🗡️' : player.classType === 'cazador' ? '🏹🧝' : player.classType === 'mago' ? '🧙‍♂️✨' : '🗡️🥷';
     const playerGlow = player.classType === 'mago' ? '#38bdf8' : player.classType === 'picaro' ? '#a855f7' : player.classType === 'guerrero' ? '#eab308' : '#22c55e';
-    const playerUrl = (player.equipment.armor && ARMOR_BODY_SPRITES[player.equipment.armor.id]) || NEW_BODY_SPRITES[player.classType] || BODY_SPRITES[player.classType] || BODY_SPRITES.humano02 || CLASS_SPRITES[player.classType] || SPRITESHEETS.luci;
+    const equippedArmor = player.equipment.armor;
+    const playerUrl = equippedArmor?.spriteSheet
+      || (equippedArmor && ARMOR_BODY_SPRITES[equippedArmor.id])
+      || NEW_BODY_SPRITES[player.classType]
+      || BODY_SPRITES[player.classType]
+      || BODY_SPRITES.humano02
+      || CLASS_SPRITES[player.classType]
+      || SPRITESHEETS.luci;
     const playerHeadUrl = HEAD_SPRITES.head_humano02;
 
     const newPlayerParams = {

@@ -29,6 +29,7 @@ export type ModalId =
   | 'quests'
   | 'help'
   | 'dataStudio'
+  | 'objectEditor'
   | 'settings'
   | 'headCalibration';
 
@@ -39,6 +40,11 @@ export interface UIStoreState {
   openModal: (id: ModalId) => void;
   closeModal: (id: ModalId) => void;
   closeAllModals: () => void;
+
+  // --- Object editor ---
+  editingItemId: string | null;
+  openObjectEditor: (itemId?: string | null) => void;
+  closeObjectEditor: () => void;
 
   // --- Contextual overlays ---
   activeShop: ShopType | null;
@@ -78,6 +84,7 @@ export const useUIStore = create<UIStoreState>()(
         quests: false,
         help: false,
         dataStudio: false,
+        objectEditor: false,
         settings: false,
         headCalibration: false,
       },
@@ -97,9 +104,22 @@ export const useUIStore = create<UIStoreState>()(
             quests: false,
             help: false,
             dataStudio: false,
+            objectEditor: false,
             settings: false,
             headCalibration: false,
           },
+        })),
+
+      editingItemId: null,
+      openObjectEditor: (itemId = null) =>
+        set((s) => ({
+          openModals: { ...s.openModals, objectEditor: true },
+          editingItemId: itemId,
+        })),
+      closeObjectEditor: () =>
+        set((s) => ({
+          openModals: { ...s.openModals, objectEditor: false },
+          editingItemId: null,
         })),
 
       activeShop: null,

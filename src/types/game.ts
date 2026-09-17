@@ -52,6 +52,10 @@ export interface Item {
   iconPath?: string;
   price: number;
   sellPrice: number;
+  /** Peso del item en Kg. */
+  weight?: number;
+  /** Spritesheet de cuerpo (armas/armaduras) en formato WebP, ej. '/spritesheets/Armor/frame_000.webp'. */
+  spriteSheet?: string;
   stackable?: boolean;
   count?: number;
   /** Optional explicit rarity. When omitted, rank is derived from price. */

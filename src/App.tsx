@@ -59,6 +59,7 @@ import { Minimap } from './components/Minimap';
 import { OrientationPrompt } from './components/OrientationPrompt';
 import { HelpModal } from './components/HelpModal';
 import { DataStudioModal } from './components/DataStudioModal';
+import { ObjectEditorModal } from './components/ObjectEditorModal';
 import { SettingsModal } from './components/SettingsModal';
 import { HeadCalibrationUI } from './components/HeadCalibrationUI';
 import { TitleScreen } from './components/TitleScreen';
@@ -1751,6 +1752,9 @@ export default function App() {
 
       {/* Data Studio & Content Registry Modal */}
       <DataStudioModal />
+
+      {/* Object Editor Modal */}
+      <ObjectEditorModal />
 
       {/* Settings & Game Options Modal */}
       <SettingsModal

@@ -115,7 +115,8 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
             {items.map((item) => (
               <div
                 key={item.id}
-                className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-3 flex items-start gap-3 hover:border-amber-500/50 transition-colors"
+                onClick={() => useUIStore.getState().openObjectEditor(item.id)}
+                className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-3 flex items-start gap-3 hover:border-amber-500/70 hover:bg-slate-800/80 cursor-pointer transition-colors"
               >
                 <div className="w-10 h-10 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-xl shrink-0">
                   <ItemIcon item={item} className="text-xl" />
@@ -495,6 +496,12 @@ export const DataStudioModal: React.FC<DataStudioModalProps> = ({
                   className="w-full pl-9 pr-3 py-1.5 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-amber-500/60"
                 />
               </div>
+              <button
+                onClick={() => useUIStore.getState().openObjectEditor(null)}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-lg shadow-amber-500/20"
+              >
+                <Plus className="w-3.5 h-3.5" /> Editor de Objetos
+              </button>
             </div>
 
             {renderContentList()}

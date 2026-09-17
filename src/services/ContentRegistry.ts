@@ -79,6 +79,14 @@ export class ContentRegistry {
     this.items.set(item.id, { ...item });
   }
 
+  /** Actualiza (o crea) un item existente en el registro. */
+  public updateItem(id: string, patch: Partial<Item>): Item {
+    const current = this.items.get(id);
+    const merged: Item = { ...(current ?? ({} as Item)), ...patch, id };
+    this.items.set(id, { ...merged });
+    return merged;
+  }
+
   public getItem(id: string): Item | undefined {
     return this.items.get(id);
   }
