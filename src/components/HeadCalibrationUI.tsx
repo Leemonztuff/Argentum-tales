@@ -81,9 +81,9 @@ export const HeadCalibrationUI: React.FC = () => {
 
   const sliders: { key: keyof HeadCalibrationConfig; label: string; min: number; max: number; step: number; desc: string }[] = [
     { key: 'scaleRatio', label: 'Escala Head', min: 0.4, max: 2.2, step: 0.01, desc: 'Tamaño relativo del head al body (chibi base 0.44)' },
-    { key: 'offsetY', label: 'Offset Vertical', min: -40, max: 40, step: 1, desc: 'Baja la cabeza (los valores negativos ya no la cortan)' },
+    { key: 'overlap', label: 'Overlap Cuello', min: -10, max: 80, step: 1, desc: 'Cuánto hunde el mentón en el pecho (más = cabeza más baja)' },
+    { key: 'offsetY', label: 'Offset Vertical', min: -60, max: 60, step: 1, desc: 'Mueve la cabeza arriba/abajo (la coronilla nunca se corta)' },
     { key: 'offsetX', label: 'Offset Horizontal', min: -20, max: 20, step: 1, desc: 'Posición X del head (píxeles)' },
-    { key: 'overlap', label: 'Overlap Cuello', min: 0, max: 20, step: 1, desc: 'Solapamiento head-body en el cuello' },
   ];
 
   return (

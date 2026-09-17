@@ -33,13 +33,15 @@ export interface HeadCalibrationConfig {
 }
 
 export const DEFAULT_HEAD_CALIBRATION: HeadCalibrationConfig = {
-  // offsetY: nudges the head DOWN only (negative values can't push the crown
-  // off-canvas anymore — the safe-frame clamp keeps it visible).
-  offsetY: -15,
+  // offsetY: whole-head vertical nudge (px). 0 = neutral; the head moves freely
+  // and the AUTO-FIT (not a hard clamp) keeps the crown inside the canvas.
+  offsetY: 0,
   offsetX: 0,
   // scaleRatio: multiplier on the chibi head ratio (0.4375 base → 1.2 ≈ 0.52 body).
   scaleRatio: 1.2,
-  overlap: 4,
+  // overlap: how deep the chin sinks below the neck line (px). Larger = head sits
+  // lower over the chest; drives the effective vertical position of the crown.
+  overlap: 44,
 };
 
 let currentHeadCalibration: HeadCalibrationConfig = { ...DEFAULT_HEAD_CALIBRATION };
@@ -47,13 +49,15 @@ const activeRenderers: Set<Game3DRenderer> = new Set();
 
 try {
   if (typeof localStorage !== 'undefined') {
-    const saved = localStorage.getItem('ao_head_calibration');
+    // v2 keys: keep the user's size preference (scaleRatio/offsetX) but reset the
+    // position sliders to the new defaults (old offsetY/overlap were dead zones).
+    const saved = localStorage.getItem('ao_head_calibration_v2') || localStorage.getItem('ao_head_calibration');
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (typeof parsed.offsetY === 'number') currentHeadCalibration.offsetY = parsed.offsetY;
-      if (typeof parsed.offsetX === 'number') currentHeadCalibration.offsetX = parsed.offsetX;
+      // Migrate from the previous dead-zone model: keep only scaleRatio/offsetX.
+      const migrated = localStorage.getItem('ao_head_calibration_v2') ? parsed : {};
       if (typeof parsed.scaleRatio === 'number') currentHeadCalibration.scaleRatio = parsed.scaleRatio;
-      if (typeof parsed.overlap === 'number') currentHeadCalibration.overlap = parsed.overlap;
+      if (typeof migrated.offsetX === 'number') currentHeadCalibration.offsetX = migrated.offsetX;
     }
   }
 } catch (e) {
@@ -64,11 +68,13 @@ export function getHeadCalibration(): HeadCalibrationConfig {
   return { ...currentHeadCalibration };
 }
 
+const HEAD_CALIBRATION_KEY = 'ao_head_calibration_v2';
+
 export function setHeadCalibration(config: Partial<HeadCalibrationConfig>): void {
   currentHeadCalibration = { ...currentHeadCalibration, ...config };
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('ao_head_calibration', JSON.stringify(currentHeadCalibration));
+      localStorage.setItem(HEAD_CALIBRATION_KEY, JSON.stringify(currentHeadCalibration));
     }
   } catch (e) {}
 
@@ -1808,20 +1814,19 @@ export class Game3DRenderer {
     const headSrcH = headCrop ? headCrop.h : headFrameH;
 
     // HEAD: single content-anchored model (no per-direction ratio tables).
-    // The headless body crop begins at the neck; the chin rests on it with a
-    // small overlap and the size is a fixed chibi ratio of the drawn body height.
+    // The headless body crop begins at the neck; the chin sinks `overlap` px below
+    // it and the size is a fixed chibi ratio of the drawn body height.
     const headFullAspect = headFrameW / headFrameH;
     const neckY = bodyDestY + bodyDrawY;
     const chinY = neckY + calib.overlap;
     let headH = Math.max(8, Math.round(bodyDrawH * Game3DRenderer.HEAD_BODY_RATIO_BASE * calib.scaleRatio));
     let headW = Math.max(8, Math.round(headH * headFullAspect));
 
-    // Single fit: crown never climbs above the safe-frame line (offsetY only
-    // nudges down; negative values can never push the crown off-canvas again).
-    let headDestY = Math.max(
-      SPRITE_LAYOUT.topMargin,
-      Math.round(chinY - headH + calib.offsetY)
-    );
+    // Vertical position: crown follows (chin − height) + offsetY, with the canvas
+    // top as the ONLY hard floor. Both sliders therefore move the head freely;
+    // the AUTO-FIT below rescales the composite if the crown trespasses the
+    // safe-frame line, so a raised head can never be cut.
+    const headDestY = Math.max(0, Math.round(chinY - headH + calib.offsetY));
 
     // Horizontal: centered + small directional offset + calibration offsetX (clamped in-canvas)
     const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
