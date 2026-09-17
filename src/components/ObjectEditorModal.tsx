@@ -4,7 +4,6 @@ import { Modal, ItemIcon, useUIStore } from '../ui';
 import { contentRegistry } from '../services/ContentRegistry';
 import { Item, ItemType, ItemRarity } from '../types/game';
 import { SPRITESHEET_INDEX_BODIES, SpritesheetEntry } from '../data/spritesheetIndex';
-import { isFullColumnSpriteUrl } from '../engine/Game3DRenderer';
 
 const RARITIES: ItemRarity[] = ['comun', 'poco_comun', 'raro', 'epico', 'legendario'];
 const ITEM_TYPES: ItemType[] = [
@@ -197,50 +196,13 @@ function FrameThumb({
     const img = new Image();
     img.decoding = 'async';
     img.onload = () => {
-      const fullcol = isFullColumnSpriteUrl(img.src);
       const fw = Math.max(1, Math.floor(img.width / 4));
-      const fh = fullcol ? img.height : Math.max(1, Math.floor(img.height / 4));
+      const fh = Math.max(1, Math.floor(img.height / 4));
       ctx.imageSmoothingEnabled = false;
-      // Full-column sheets: crop to the first pose's real content so the whole
-      // character (head + feet) fits the thumbnail instead of a quarter slice.
-      let sx = 0;
-      let sy = 0;
-      let sw = fw;
-      let sh = fh;
-      if (fullcol) {
-        const probe = document.createElement('canvas');
-        probe.width = fw;
-        probe.height = fh;
-        const pctx = probe.getContext('2d', { willReadFrequently: true });
-        if (pctx) {
-          pctx.drawImage(img, 0, 0, fw, fh, 0, 0, fw, fh);
-          const d = pctx.getImageData(0, 0, fw, fh).data;
-          let minY = fh;
-          let maxY = -1;
-          let minX = fw;
-          let maxX = -1;
-          for (let y = 0; y < fh; y++) {
-            for (let x = 0; x < fw; x++) {
-              if (d[(y * fw + x) * 4 + 3] > 8) {
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-              }
-            }
-          }
-          if (maxY >= 0) {
-            sx = minX;
-            sy = minY;
-            sw = maxX - minX + 1;
-            sh = maxY - minY + 1;
-          }
-        }
-      }
-      const s = Math.min(canvas.width / sw, canvas.height / sh);
-      const dw = Math.floor(sw * s);
-      const dh = Math.floor(sh * s);
-      ctx.drawImage(img, sx, sy, sw, sh, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+      const s = Math.min(canvas.width / fw, canvas.height / fh);
+      const dw = Math.floor(fw * s);
+      const dh = Math.floor(fh * s);
+      ctx.drawImage(img, 0, 0, fw, fh, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
       applyMagentaKey(canvas);
     };
     img.src = url;

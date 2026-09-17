@@ -79,19 +79,113 @@ export function setHeadCalibration(config: Partial<HeadCalibrationConfig>): void
 // channel (e.g. JPEG player spritesheets). Pure-alpha PNGs are left untouched.
 const MAGENTA_TOLERANCE = 60;
 
-// Sprite sheets come in two layouts:
-//  - '4x4'    : classic grid of 4 cols x 4 rows (down/left/right/up), used by the
-//               PNG body/head/NPC sheets and remote mob sheets.
-//  - 'fullcol': single-row WebP sheets (Armor/, Clothes/, Npc-0x.webp). Each of
-//               the 4 columns holds ONE full-height character (~height px tall,
-//               knife-cut at the waist seam y ≈ h/2); columns are walk poses.
-export function isFullColumnSpriteUrl(url: string): boolean {
-  const u = url.toLowerCase();
-  return (
-    u.includes('/spritesheets/armor/') ||
-    u.includes('/spritesheets/clothes/') ||
-    /\/spritesheets\/npc-\d+\.webp/.test(u)
-  );
+// Sprite sheet frame grid. The 1295x1295 WebP body sheets (Armor/, Clothes/,
+// Npc-0x.webp) are 4 cols x 4 rows (facing front/left/right/back) of ~320x320
+// frames laid out on a ~325px stride (5px gutters). Older normalized PNG sheets
+// use a clean width/4 stride. The stride is measured from separator lines so
+// padding variation between frames never shifts the sampled cells.
+export interface SpriteSheetGrid {
+  cols: number;
+  rows: number;
+  strideX: number;
+  strideY: number;
+  frameW: number;
+  frameH: number;
+}
+
+const gridCache = new Map<string, SpriteSheetGrid>();
+
+export function bandStarts(counts: number[], size: number, threshold: number): number[] {
+  const gaps: Array<[number, number]> = [];
+  for (let i = 0; i < size; i++) {
+    if (counts[i] <= threshold) {
+      const last = gaps[gaps.length - 1];
+      if (last && last[1] === i - 1) last[1] = i;
+      else gaps.push([i, i]);
+    }
+  }
+  const starts: number[] = [];
+  let cursor = 0;
+  for (const [a, b] of gaps) {
+    if (cursor < a) starts.push(cursor);
+    cursor = Math.max(cursor, b + 1);
+  }
+  if (cursor < size) starts.push(cursor);
+  return starts.sort((a, b) => a - b);
+}
+
+export function medianBandStride(starts: number[], size: number): number {
+  if (starts.length < 2) return 0;
+  const diffs = starts.slice(1).map((v, i) => v - starts[i]);
+  diffs.push(size - starts[starts.length - 1]);
+  diffs.sort((a, b) => a - b);
+  return diffs[Math.floor(diffs.length / 2)];
+}
+
+// Drop spurious content bands (e.g. a single stray pixel inside a gutter) so
+// only real frame cells count towards the grid stride.
+export function cleanTinyBands(starts: number[], size: number, minWidth: number): number[] {
+  if (minWidth <= 1) return starts;
+  return starts.filter((start, i, all) => {
+    const end = i + 1 < all.length ? all[i + 1] : size;
+    return end - start >= minWidth;
+  });
+}
+
+function measureSpriteSheetGrid(img: HTMLImageElement): SpriteSheetGrid {
+  const classic: SpriteSheetGrid = {
+    cols: 4,
+    rows: 4,
+    strideX: Math.floor(img.width / 4),
+    strideY: Math.floor(img.height / 4),
+    frameW: Math.floor(img.width / 4),
+    frameH: Math.floor(img.height / 4),
+  };
+  if (!img.width || !img.height) return classic;
+  const cached = gridCache.get(img.src);
+  if (cached) return cached;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (ctx) {
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, img.width, img.height).data;
+      const colCounts = new Array<number>(img.width).fill(0);
+      const rowCounts = new Array<number>(img.height).fill(0);
+      for (let y = 0; y < img.height; y++) {
+        for (let x = 0; x < img.width; x++) {
+          if (d[(y * img.width + x) * 4 + 3] > 30) {
+            colCounts[x]++;
+            rowCounts[y]++;
+          }
+        }
+      }
+      const colStarts = cleanTinyBands(bandStarts(colCounts, img.width, 0), img.width, Math.floor(SPRITE_CANVAS / 4));
+      const rowStarts = cleanTinyBands(bandStarts(rowCounts, img.height, 0), img.height, Math.floor(SPRITE_CANVAS / 4));
+      if (colStarts.length === 4 && rowStarts.length === 4) {
+        const strideX = medianBandStride(colStarts, img.width);
+        const strideY = medianBandStride(rowStarts, img.height);
+        if (strideX > 0 && strideY > 0) {
+          const grid: SpriteSheetGrid = {
+            cols: 4,
+            rows: 4,
+            strideX,
+            strideY,
+            frameW: Math.max(1, strideX),
+            frameH: Math.max(1, strideY),
+          };
+          gridCache.set(img.src, grid);
+          return grid;
+        }
+      }
+    }
+  } catch {
+    // fall through to the classic width/4 split
+  }
+  gridCache.set(img.src, classic);
+  return classic;
 }
 
 function applyMagentaKeyToCanvas(canvas: HTMLCanvasElement): void {
@@ -1349,20 +1443,6 @@ export class Game3DRenderer {
 
   // --- SPRITE CANVAS 2D RENDERER ---
 
-  // Sprite sheets come in two layouts:
-  //  - '4x4'    : classic grid of 4 cols x 4 rows (down/left/right/up), used by
-  //               the PNG body/head/NPC sheets and remote mob sheets.
-  //  - 'fullcol': single-row WebP sheets (Armor/, Clothes/, Npc-0x.webp). Each of
-  //               the 4 columns holds ONE full-height character (~height px tall,
-  //               knife-cut at the waist seam y ≈ h/2); columns are walk poses.
-  private isFullColumnSpriteUrl(url: string): boolean {
-    return isFullColumnSpriteUrl(url);
-  }
-
-  private getSheetFrameMode(img: HTMLImageElement): '4x4' | 'fullcol' {
-    return this.isFullColumnSpriteUrl(img.src) ? 'fullcol' : '4x4';
-  }
-
   private renderSpriteCanvas(
     emojiOrIcon: string,
     glowColor: string,
@@ -1394,21 +1474,20 @@ export class Game3DRenderer {
     const img = spriteUrl ? this.getOrLoadImage(spriteUrl) : null;
 
     if (img) {
-      // 4x4 Spritesheet frame rendering with exact integer cell boundaries.
-      // fullcol sheets have no direction rows: 4 walk poses, frame height = whole image.
-      const sheetMode = this.getSheetFrameMode(img);
-      const frameW = Math.floor(img.width / 4);
-      const frameH = sheetMode === 'fullcol' ? img.height : Math.floor(img.height / 4);
+      // 4x4 frame rendering with the measured grid (stride may include gutters).
+      // Rows are facing directions: 0=down, 1=left, 2=right, 3=up; cols are the
+      // 4 walk/animation poses.
+      const grid = measureSpriteSheetGrid(img);
+      const frameW = grid.frameW;
+      const frameH = grid.frameH;
       const col = animFrame % 4;
       let row = 0; // down
-      if (sheetMode !== 'fullcol') {
-        if (facing === 'left') row = 1;
-        else if (facing === 'right') row = 2;
-        else if (facing === 'up') row = 3;
-      }
+      if (facing === 'left') row = 1;
+      else if (facing === 'right') row = 2;
+      else if (facing === 'up') row = 3;
 
-      const sx = Math.floor(col * frameW);
-      const sy = Math.floor(row * frameH);
+      const sx = Math.floor(col * grid.strideX);
+      const sy = Math.floor(row * grid.strideY);
 
       // Disable canvas image smoothing explicitly
       ctx.imageSmoothingEnabled = false;
@@ -1495,16 +1574,14 @@ export class Game3DRenderer {
       for (const overlayUrl of overlaySpriteUrls) {
         const overlayImg = overlayUrl ? this.getOrLoadImage(overlayUrl) : null;
         if (!overlayImg) continue;
-        const oSheetMode = this.getSheetFrameMode(overlayImg);
-        const oFrameW = Math.floor(overlayImg.width / 4);
-        const oFrameH = oSheetMode === 'fullcol' ? overlayImg.height : Math.floor(overlayImg.height / 4);
-        const oSx = Math.floor((animFrame % 4) * oFrameW);
-        let oSy = Math.floor(0 * oFrameH);
-        if (oSheetMode !== 'fullcol') {
-          if (facing === 'left') oSy = Math.floor(1 * oFrameH);
-          else if (facing === 'right') oSy = Math.floor(2 * oFrameH);
-          else if (facing === 'up') oSy = Math.floor(3 * oFrameH);
-        }
+        const oGrid = measureSpriteSheetGrid(overlayImg);
+        const oFrameW = oGrid.frameW;
+        const oFrameH = oGrid.frameH;
+        const oSx = Math.floor((animFrame % 4) * oGrid.strideX);
+        let oSy = Math.floor(0 * oGrid.strideY);
+        if (facing === 'left') oSy = Math.floor(1 * oGrid.strideY);
+        else if (facing === 'right') oSy = Math.floor(2 * oGrid.strideY);
+        else if (facing === 'up') oSy = Math.floor(3 * oGrid.strideY);
 
         // Each overlay detects its own content bounds (not reusing body's crop)
         const oCrop = getNonEmptyBounds(overlayImg, oSx, oSy, oFrameW, oFrameH);
@@ -1630,19 +1707,17 @@ export class Game3DRenderer {
     if (!bodyImg || !headImg) return canvas;
 
     // --- BODY LAYER ---
-    const bodyMode = this.getSheetFrameMode(bodyImg);
-    const bodyFrameW = Math.floor(bodyImg.width / 4);
-    const bodyFrameH = bodyMode === 'fullcol' ? bodyImg.height : Math.floor(bodyImg.height / 4);
+    const bodyGrid = measureSpriteSheetGrid(bodyImg);
+    const bodyFrameW = bodyGrid.frameW;
+    const bodyFrameH = bodyGrid.frameH;
     const bodyCol = animFrame % 4;
     let bodyRow = 0;
-    if (bodyMode !== 'fullcol') {
-      if (facing === 'left') bodyRow = 1;
-      else if (facing === 'right') bodyRow = 2;
-      else if (facing === 'up') bodyRow = 3;
-    }
+    if (facing === 'left') bodyRow = 1;
+    else if (facing === 'right') bodyRow = 2;
+    else if (facing === 'up') bodyRow = 3;
 
-    const bodySx = actionSlice ? actionSlice.col * bodyFrameW : Math.floor(bodyCol * bodyFrameW);
-    const bodySy = actionSlice ? actionSlice.row * bodyFrameH : Math.floor(bodyRow * bodyFrameH);
+    const bodySx = actionSlice ? actionSlice.col * bodyFrameW : Math.floor(bodyCol * bodyGrid.strideX);
+    const bodySy = actionSlice ? actionSlice.row * bodyFrameH : Math.floor(bodyRow * bodyGrid.strideY);
 
     // Detect actual content bounds to prevent wobble from uneven cell padding
     const bodyCrop = getNonEmptyBounds(bodyImg, bodySx, bodySy, bodyFrameW, bodyFrameH);
@@ -1670,14 +1745,8 @@ export class Game3DRenderer {
     const bodyDestY = Math.max(SPRITE_LAYOUT.topMargin, Math.floor(SPRITE_LAYOUT.feet - bodyDestH));
 
     // Draw body crop centered within the fixed-size destination rect.
-    // fullcol columns are whole-character frames (~height px): scale the crop to
-    // exactly fill the (already capped) dest rect so pixel mode cannot overflow.
-    let bodyDrawW = Math.floor(bodySrcW * bodyScale);
-    let bodyDrawH = Math.floor(bodySrcH * bodyScale);
-    if (bodyMode === 'fullcol') {
-      bodyDrawW = bodyDestW;
-      bodyDrawH = bodyDestH;
-    }
+    const bodyDrawW = Math.floor(bodySrcW * bodyScale);
+    const bodyDrawH = Math.floor(bodySrcH * bodyScale);
     const bodyDrawX = Math.floor((bodyDestW - bodyDrawW) / 2);
     const bodyDrawY = Math.floor((bodyDestH - bodyDrawH) / 2);
     const bodyLayer = document.createElement('canvas');
@@ -1690,9 +1759,6 @@ export class Game3DRenderer {
     ctx.drawImage(bodyLayer, bodyDestX, bodyDestY);
 
     // --- HEAD LAYER ---
-    // fullcol sheets (Armor/Clothes/Npc WebP) already include the head baked into the
-    // column, so the separate PNG head overlay is skipped to avoid a double head.
-    if (bodyMode !== 'fullcol') {
     const headFrameW = Math.floor(headImg.width / 4);
     const headFrameH = Math.floor(headImg.height / 4);
     const headCol = animFrame % 4;
@@ -1747,7 +1813,6 @@ export class Game3DRenderer {
     hlCtx.drawImage(headImg, headSrcX, headSrcY, headSrcW, headSrcH, headDrawX, headDrawY, headDrawW, headDrawH);
     applyMagentaKeyToCanvas(headLayer);
     ctx.drawImage(headLayer, headDestX, headDestY);
-    }
 
     // AUTO-FIT (safe-frame): aggressive calibration or large heads can push the
     // composite above the label-clearance line (or off-canvas), cutting the
