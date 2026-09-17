@@ -1551,8 +1551,12 @@ export class Game3DRenderer {
       // across frames don't shift the sprite position.
       const bodyGhostAlpha = ctx.globalAlpha;
       ctx.globalAlpha = 1;
-      const drawW = Math.floor(srcW * scale);
-      const drawH = Math.floor(srcH * scale);
+      // Same effective-scale fix as the player composite: pixel mode clamps the
+      // integer scale to 1 for large cells but the dest rect is capped smaller,
+      // so drawing at `scale` (1) would clip the sprite to a center window.
+      const drawScale = Math.min(destW / frameW, destH / frameH);
+      const drawW = Math.floor(srcW * drawScale);
+      const drawH = Math.floor(srcH * drawScale);
       const drawX = Math.floor((destW - drawW) / 2);
       const drawY = Math.floor((destH - drawH) / 2);
       const bodyLayer = document.createElement('canvas');
@@ -1591,8 +1595,8 @@ export class Game3DRenderer {
         const oSrcH = oCrop ? oCrop.h : oFrameH;
 
         // Center overlay crop within the same fixed dest rect as the body
-        const oDrawW = Math.floor(oSrcW * scale);
-        const oDrawH = Math.floor(oSrcH * scale);
+        const oDrawW = Math.floor(oSrcW * drawScale);
+        const oDrawH = Math.floor(oSrcH * drawScale);
         const oDrawX = Math.floor((destW - oDrawW) / 2);
         const oDrawY = Math.floor((destH - oDrawH) / 2);
         const overlayLayer = document.createElement('canvas');
@@ -1745,8 +1749,13 @@ export class Game3DRenderer {
     const bodyDestY = Math.max(SPRITE_LAYOUT.topMargin, Math.floor(SPRITE_LAYOUT.feet - bodyDestH));
 
     // Draw body crop centered within the fixed-size destination rect.
-    const bodyDrawW = Math.floor(bodySrcW * bodyScale);
-    const bodyDrawH = Math.floor(bodySrcH * bodyScale);
+    // FIX: pixel mode can clamp the integer scale to 1 for large cells (325px WebP),
+    // while the capped dest rect is much smaller (180px). Drawing the crop at scale 1
+    // then overflows the layer and only the middle "window" of the sprite is visible.
+    // Use the effective scale from the (capped) dest rect so the whole body always fits.
+    const bodyDrawScale = Math.min(bodyDestW / bodyFrameW, bodyDestH / bodyFrameH);
+    const bodyDrawW = Math.floor(bodySrcW * bodyDrawScale);
+    const bodyDrawH = Math.floor(bodySrcH * bodyDrawScale);
     const bodyDrawX = Math.floor((bodyDestW - bodyDrawW) / 2);
     const bodyDrawY = Math.floor((bodyDestH - bodyDrawH) / 2);
     const bodyLayer = document.createElement('canvas');
