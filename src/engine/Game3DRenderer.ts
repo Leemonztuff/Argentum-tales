@@ -1797,13 +1797,6 @@ export class Game3DRenderer {
     const headDestW = Math.min(SPRITE_CANVAS, Math.round(bodyDestW * calib.scaleRatio));
     const headDestH = Math.round(headDestW / headFullAspect);
 
-    // Horizontal: centered + directional offset + calibration offsetX (clamped in-canvas)
-    const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
-    const headDestX = Math.min(
-      SPRITE_CANVAS - headDestW,
-      Math.max(0, Math.round((SPRITE_CANVAS - headDestW) / 2) + dirOffsetX + calib.offsetX)
-    );
-
     // Vertical: shoulder position + overlap - chin ratio + calibration offsetY
     const shoulderY = bodyDestY + Math.round(shoulderRatio * bodyDestH);
     const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
@@ -1823,7 +1816,34 @@ export class Game3DRenderer {
       headFitY = Math.round(headDestY + (headDestH - headFitH));
     }
 
-    // Draw head crop centered within the fixed-size head destination rect
+    // FIX: also keep the DRAWN crown clear of the canvas top. A head that hugs
+    // the billboard edge (soft hair AA clipped by the sprite alphaTest) reads as
+    // a "cut crown". With the chin anchored on the neck line, cap the head height
+    // so its crown lands exactly on the safe-frame line; the composite then never
+    // triggers AUTO-FIT.
+    const headCropFraction = Math.max(0, Math.min(1, headSrcH / headFrameH));
+    const headCrownInset = Math.max(0, (1 - headCropFraction) / 2);
+    const headBottom = headFitY + headFitH;
+    const headCrownTop = headFitY + Math.round(headFitH * headCrownInset);
+    if (headCrownTop < SPRITE_LAYOUT.topMargin) {
+      const maxH = Math.max(
+        8,
+        Math.round((headBottom - SPRITE_LAYOUT.topMargin) / Math.max(0.05, 1 - headCrownInset))
+      );
+      const k = Math.max(0.25, maxH / headFitH);
+      headFitH = Math.max(8, Math.round(headFitH * k));
+      headFitW = Math.max(8, Math.round(headFitW * k));
+      headFitY = Math.max(0, headBottom - headFitH);
+    }
+
+    // Horizontal: centered + directional offset + calibration offsetX (clamped in-canvas)
+    const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
+    const headDestX = Math.min(
+      SPRITE_CANVAS - headFitW,
+      Math.max(0, Math.round((SPRITE_CANVAS - headFitW) / 2) + dirOffsetX + calib.offsetX)
+    );
+
+    // Draw head crop centered within the (final) fitted head destination rect
     const headDrawW = Math.round(headSrcW * (headFitW / headFrameW));
     const headDrawH = Math.round(headSrcH * (headFitH / headFrameH));
     const headDrawX = Math.floor((headFitW - headDrawW) / 2);
