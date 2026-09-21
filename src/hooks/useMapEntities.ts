@@ -5,6 +5,7 @@ import type { ToastMessage } from '../components/ToastNotification';
 import { MAPS } from '../data/maps';
 import { MOBS } from '../data/mobs';
 import { sound } from '../services/sound';
+import { rehydrateMapState } from '../utils/mapStateUtils';
 
 interface UseMapEntitiesOptions {
   activeMobs: ActiveMob[];
@@ -126,6 +127,7 @@ export function useMapEntities({
 
       lastTeleportTime.current = Date.now();
       sound.playPotion();
+      rehydrateMapState(targetMap, player); // restore opened chests / harvested nodes
       setCurrentMap(targetMap);
       setPlayer((prev) => {
         if (!prev) return null;

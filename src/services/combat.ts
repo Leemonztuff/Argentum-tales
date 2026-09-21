@@ -168,7 +168,16 @@ export class CombatEngine {
     const baseCritChance = 0.08 + (player.stats.agilidad * 0.005);
     const isGeneralCrit = Math.random() < baseCritChance;
 
-    if (attackType === 'stab' || (player.classType === 'picaro' && Math.random() < (player.skills.apunalar.level / 120 + 0.15))) {
+    // Stabbing is a CHANCE (scales with the Apuñalar skill), not a guaranteed
+    // critical: previously `attackType === 'stab'` was always true for a
+    // dagger-wielding picaro, making every hit a defense-piercing crit.
+    const stabChance = Math.min(0.8, 0.15 + (player.skills.apunalar.level / 120) * 0.5);
+    const rollsStab =
+      attackType === 'stab'
+        ? Math.random() < stabChance + 0.1 // dagger rogues get a small bonus
+        : player.classType === 'picaro' && Math.random() < stabChance;
+
+    if (rollsStab) {
       isCriticalStab = true;
       isCritical = true;
       const stabMultiplier = 1.6 + (player.skills.apunalar.level * 0.01);

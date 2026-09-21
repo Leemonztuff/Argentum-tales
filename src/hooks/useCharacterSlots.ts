@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { PlayerCharacter } from '../types/game';
 import type { GameMap } from '../types/game';
 import { MAPS } from '../data/maps';
+import { rehydrateMapState } from '../utils/mapStateUtils';
 import {
   loadCharacterSlots,
   deleteCharacterSlot,
@@ -30,6 +31,7 @@ export function useCharacterSlots({ setPlayer, setCurrentMap, spawnMobsForMap }:
       setActiveSlotIndex(index);
       setPlayer(char);
       const map = MAPS[char.currentMapId] || MAPS.pueblo_inicial;
+      rehydrateMapState(map, char); // restore opened chests / harvested nodes
       setCurrentMap(map);
       spawnMobsForMap(map, char.revengeTargetTemplateId);
     }

@@ -332,6 +332,8 @@ export interface PlayerCharacter {
   revengeTargetTemplateId?: string;
   defeatedBosses: string[];
   openedChests: string[];
+  /** Ids of harvested gather nodes, namespaced as `${mapId}:${nodeId}` (legacy saves may omit it). */
+  harvestedNodes?: string[];
   jobStage?: 'novicio' | 'primer_job' | 'segundo_job';
   jobTitle?: string;
 }

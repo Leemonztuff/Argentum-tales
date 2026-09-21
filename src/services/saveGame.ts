@@ -6,6 +6,32 @@ const SAVE_KEY = 'argentum_agite_save_v1';
 const SLOTS_KEY = 'argentum_character_slots_v2';
 const ACTIVE_SLOT_KEY = 'argentum_active_slot_v2';
 
+/**
+ * Reads the legacy single-character save (SAVE_KEY) WITHOUT touching the slots
+ * system. Used by the slot migration below — calling loadGameState() here would
+ * recurse (loadGameState → loadCharacterSlots → loadGameState...) until the
+ * call stack overflowed and the exception was silently swallowed.
+ */
+const loadLegacySave = (): PlayerCharacter | null => {
+  try {
+    const data = localStorage.getItem(SAVE_KEY);
+    if (!data) return null;
+    const player = JSON.parse(data) as PlayerCharacter;
+    if (!player.equippedSpells || !Array.isArray(player.equippedSpells) || player.equippedSpells.length < 4) {
+      const known = player.knownSpells || ['dardo_magico'];
+      player.equippedSpells = [
+        known[0] || null,
+        known[1] || null,
+        known[2] || null,
+        known[3] || null,
+      ];
+    }
+    return player;
+  } catch {
+    return null;
+  }
+};
+
 export const loadCharacterSlots = (): (PlayerCharacter | null)[] => {
   try {
     const raw = localStorage.getItem(SLOTS_KEY);
@@ -16,7 +42,7 @@ export const loadCharacterSlots = (): (PlayerCharacter | null)[] => {
       }
     }
     // Migration from old single save
-    const old = loadGameState();
+    const old = loadLegacySave();
     if (old) {
       const slots: (PlayerCharacter | null)[] = [old, null, null];
       saveCharacterSlots(slots);
@@ -220,19 +246,7 @@ export const loadGameState = (): PlayerCharacter | null => {
     const firstPopulated = slots.find((s) => s !== null);
     if (firstPopulated) return firstPopulated;
 
-    const data = localStorage.getItem(SAVE_KEY);
-    if (!data) return null;
-    const player = JSON.parse(data) as PlayerCharacter;
-    if (!player.equippedSpells || !Array.isArray(player.equippedSpells) || player.equippedSpells.length < 4) {
-      const known = player.knownSpells || ['dardo_magico'];
-      player.equippedSpells = [
-        known[0] || null,
-        known[1] || null,
-        known[2] || null,
-        known[3] || null,
-      ];
-    }
-    return player;
+    return loadLegacySave();
   } catch {
     return null;
   }
