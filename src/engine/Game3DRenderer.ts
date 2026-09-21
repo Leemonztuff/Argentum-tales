@@ -11,6 +11,16 @@ import { SpritePBRGenerator, SpriteMaterialTextures } from './SpritePBRGenerator
 import { CameraManager, getCameraReferenceDistance } from './CameraManager';
 import { SpriteInstancingManager } from './SpriteInstancingManager';
 import {
+  getHandSocket,
+  getNeckAnchor,
+  getSocketBobPx,
+  socketToCanvas,
+  WEAPON_HEIGHT_RATIO,
+  type ContentRect,
+  type HandSocket,
+} from './SpriteSockets';
+import { getWeaponSpriteUrl } from '../data/weaponSprites';
+import {
   HP_BAR,
   QUAD_CENTER_TO_FEET_UNIT,
   SHADOW_RADIUS,
@@ -444,6 +454,7 @@ export class Game3DRenderer {
     facing: 'up' | 'down' | 'left' | 'right';
     spriteUrl: string;
     headUrl: string;
+    weaponUrl?: string;
   } | null = null;
   private playerNeedsTextureRefresh: boolean = false;
   private playerCompositeKey: string = '';
@@ -1558,21 +1569,23 @@ export class Game3DRenderer {
     return canvas;
   }
 
-  // Per-direction anatomical ratios for head placement on body
-  private static readonly SHOULDER_RATIOS = [0.091, 0.129, 0.129, 0.106]; // down, left, right, up
-  private static readonly CHIN_RATIOS = [0.940, 0.965, 0.970, 0.990];    // down, left, right, up
-
   /**
-   * Composites body + head spritesheets onto a single 256×256 canvas.
-   * Uses getNonEmptyBounds per frame to prevent lateral wobble from uneven cell padding.
-   * Uniform scale ensures all directions keep the same pixel density.
+   * Composites weapon (via hand sockets) + body + head spritesheets onto a
+   * single 256×256 canvas.
+   *
+   * Layering contract:
+   *  - weapon BEHIND the body when facing 'up' (socket.behindBody), else after head
+   *  - the head's chin anchors to the neck point derived from the REAL body
+   *    content rect of the current frame — the head follows the body with no
+   *    hand-tuned per-direction ratios and no wobble between frames.
    */
   public renderPlayerComposite(
     bodyUrl: string,
     headUrl: string,
     facing: 'up' | 'down' | 'left' | 'right',
     animFrame: number,
-    action?: PlayerAction
+    action?: PlayerAction,
+    weaponUrl?: string
   ): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     canvas.width = SPRITE_CANVAS;
@@ -1641,6 +1654,24 @@ export class Game3DRenderer {
     blCtx.imageSmoothingEnabled = false;
     blCtx.drawImage(bodyImg, bodySrcX, bodySrcY, bodySrcW, bodySrcH, bodyDrawX, bodyDrawY, bodyDrawW, bodyDrawH);
     applyMagentaKeyToCanvas(bodyLayer);
+
+    // Rectángulo del contenido real del cuerpo en coordenadas de canvas —
+    // ES el ancla de todas las demás capas (cabeza y arma lo siguen).
+    const bodyContent: ContentRect = {
+      x: bodyDestX + bodyDrawX,
+      y: bodyDestY + bodyDrawY,
+      w: bodyDrawW,
+      h: bodyDrawH,
+    };
+
+    // --- WEAPON LAYER (behind body when facing away) ---
+    const weaponImg = weaponUrl ? this.getOrLoadImage(weaponUrl) : null;
+    const weaponReady = !!weaponImg && weaponImg.complete && weaponImg.naturalWidth > 0;
+    const handSocket = weaponUrl ? getHandSocket(facing, animFrame) : null;
+    if (weaponReady && handSocket?.behindBody) {
+      this.drawWeaponLayer(ctx, weaponImg!, handSocket, bodyContent, getSocketBobPx(animFrame));
+    }
+
     ctx.drawImage(bodyLayer, bodyDestX, bodyDestY);
 
     // --- HEAD LAYER ---
@@ -1662,42 +1693,34 @@ export class Game3DRenderer {
     const headSrcW = headCrop ? headCrop.w : headFrameW;
     const headSrcH = headCrop ? headCrop.h : headFrameH;
 
-    const rowIdx = bodyRow;
-    const shoulderRatio = Game3DRenderer.SHOULDER_RATIOS[rowIdx];
-    const chinRatio = Game3DRenderer.CHIN_RATIOS[rowIdx];
-
-    // FIX: Compute head dimensions from FULL head frame cell (constant), not from
-    // per-frame crop (variable). Using the crop's aspect ratio makes the head grow/shrink
-    // across frames. The full frame provides a stable aspect ratio and base size.
+    // Head size comes from the FULL frame cell (constant), never from the
+    // per-frame crop — keeps the head size stable across frames/directions.
     const headFullAspect = headFrameW / headFrameH;
     const headDestW = Math.min(SPRITE_CANVAS, Math.round(bodyDestW * calib.scaleRatio));
     const headDestH = Math.round(headDestW / headFullAspect);
 
-    // Horizontal: centered + directional offset + calibration offsetX (clamped in-canvas)
-    const dirOffsetX = (facing === 'left' ? -2 : facing === 'right' ? 2 : 0);
-    const headDestX = Math.min(
-      SPRITE_CANVAS - headDestW,
-      Math.max(0, Math.round((SPRITE_CANVAS - headDestW) / 2) + dirOffsetX + calib.offsetX)
-    );
-
-    // Vertical: shoulder position + overlap - chin ratio + calibration offsetY
-    const shoulderY = bodyDestY + Math.round(shoulderRatio * bodyDestH);
-    const overlap = rowIdx === 3 ? Math.max(1, calib.overlap - 2) : calib.overlap;
-    const headDestY = Math.round(shoulderY + overlap - (chinRatio * headDestH) + calib.offsetY);
-
-    // Draw head crop centered within the fixed-size head destination rect
-    const headDrawW = Math.round(headSrcW * (headDestW / headFrameW));
-    const headDrawH = Math.round(headSrcH * (headDestH / headFrameH));
-    const headDrawX = Math.floor((headDestW - headDrawW) / 2);
-    const headDrawY = Math.floor((headDestH - headDrawH) / 2);
+    const headDrawW = Math.max(1, Math.round(headSrcW * (headDestW / headFrameW)));
+    const headDrawH = Math.max(1, Math.round(headSrcH * (headDestH / headFrameH)));
     const headLayer = document.createElement('canvas');
-    headLayer.width = Math.max(1, Math.ceil(headDestW));
-    headLayer.height = Math.max(1, Math.ceil(headDestH));
+    headLayer.width = headDrawW;
+    headLayer.height = headDrawH;
     const hlCtx = headLayer.getContext('2d')!;
     hlCtx.imageSmoothingEnabled = false;
-    hlCtx.drawImage(headImg, headSrcX, headSrcY, headSrcW, headSrcH, headDrawX, headDrawY, headDrawW, headDrawH);
+    hlCtx.drawImage(headImg, headSrcX, headSrcY, headSrcW, headSrcH, 0, 0, headDrawW, headDrawH);
     applyMagentaKeyToCanvas(headLayer);
-    ctx.drawImage(headLayer, headDestX, headDestY);
+
+    // ANCHORING: the head's chin sits exactly on the neck point of the actual
+    // body content drawn above. The head follows the body frame-by-frame.
+    const neck = getNeckAnchor(bodyContent, facing);
+    const chinY = neck.y + calib.overlap + calib.offsetY;
+    const headX = Math.round(neck.x + calib.offsetX - headDrawW / 2);
+    const headY = Math.round(chinY - headDrawH);
+    ctx.drawImage(headLayer, headX, headY);
+
+    // --- WEAPON LAYER (in front of body/head for down/left/right) ---
+    if (weaponReady && handSocket && !handSocket.behindBody) {
+      this.drawWeaponLayer(ctx, weaponImg!, handSocket, bodyContent, getSocketBobPx(animFrame));
+    }
 
     // AUTO-FIT (safe-frame): aggressive calibration or large heads can push the
     // composite above the label-clearance line (or off-canvas), cutting the
@@ -1728,6 +1751,44 @@ export class Game3DRenderer {
     applyMagentaKeyToCanvas(canvas);
 
     return canvas;
+  }
+
+  /**
+   * Dibuja el arma (single-frame) anclada al socket de la mano.
+   * El origen de rotación es la empuñadura (base-centro del gráfico):
+   * el socket representa la mano que agarra el arma.
+   */
+  private drawWeaponLayer(
+    ctx: CanvasRenderingContext2D,
+    weaponImg: HTMLImageElement,
+    socket: HandSocket,
+    bodyContent: ContentRect,
+    bobPx: number
+  ): void {
+    const grip = socketToCanvas(socket, bodyContent);
+    grip.y += bobPx;
+
+    const targetH = Math.max(8, Math.round(bodyContent.h * WEAPON_HEIGHT_RATIO));
+    const scale = targetH / weaponImg.naturalHeight;
+    const dw = Math.max(1, Math.round(weaponImg.naturalWidth * scale));
+    const dh = targetH;
+
+    // Pre-magenta-key en una capa: rotar el PNG directo dejaría halo magenta.
+    const layer = document.createElement('canvas');
+    layer.width = dw;
+    layer.height = dh;
+    const lctx = layer.getContext('2d')!;
+    lctx.imageSmoothingEnabled = false;
+    lctx.drawImage(weaponImg, 0, 0, dw, dh);
+    applyMagentaKeyToCanvas(layer);
+
+    ctx.save();
+    ctx.translate(grip.x, grip.y);
+    if (socket.flipX) ctx.scale(-1, 1);
+    ctx.rotate((socket.angleDeg * Math.PI) / 180);
+    // La empuñadura (base-centro) queda en el punto de la mano.
+    ctx.drawImage(layer, -Math.round(dw / 2), -dh);
+    ctx.restore();
   }
 
   public triggerPlayerAction(action: PlayerAction): void {
@@ -2064,6 +2125,7 @@ export class Game3DRenderer {
       facing: player.facing,
       spriteUrl: playerUrl,
       headUrl: playerHeadUrl,
+      weaponUrl: getWeaponSpriteUrl(player.equipment.weapon?.id),
     };
 
     if (
@@ -2072,7 +2134,8 @@ export class Game3DRenderer {
       this.playerRenderParams.isStealthed !== newPlayerParams.isStealthed ||
       this.playerRenderParams.name !== newPlayerParams.name ||
       this.playerRenderParams.spriteUrl !== newPlayerParams.spriteUrl ||
-      this.playerRenderParams.headUrl !== newPlayerParams.headUrl
+      this.playerRenderParams.headUrl !== newPlayerParams.headUrl ||
+      this.playerRenderParams.weaponUrl !== newPlayerParams.weaponUrl
     ) {
       this.playerNeedsTextureRefresh = true;
     }
@@ -2965,9 +3028,10 @@ export class Game3DRenderer {
           if (!this.playerGroup) {
             const pScale = getEntityWorldScale('player');
 
-            // Canvas-composited body+head on a single 256×256 texture
-            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction);
-            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
+            // Canvas-composited weapon+body+head on a single 256×256 texture
+            const weaponUrl = this.playerRenderParams.weaponUrl;
+            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction, weaponUrl);
+            const compositeKey = `player_${bodyUrl}_${headUrl}_${weaponUrl || ''}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
             const tex = new THREE.CanvasTexture(compositeCanvas);
             this.applySpriteTextureFiltering(tex);
 
@@ -2996,9 +3060,10 @@ export class Game3DRenderer {
             this.playerLastAnimFrame = pAnimFrame;
             this.playerNeedsTextureRefresh = false;
 
-            // Re-composite body+head canvas with new frame/calibration
-            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction);
-            const compositeKey = `player_${bodyUrl}_${headUrl}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
+            // Re-composite weapon+body+head canvas with new frame/calibration
+            const weaponUrl = this.playerRenderParams.weaponUrl;
+            const compositeCanvas = this.renderPlayerComposite(bodyUrl, headUrl, facing, pAnimFrame, activeAction, weaponUrl);
+            const compositeKey = `player_${bodyUrl}_${headUrl}_${weaponUrl || ''}_${facing}_${pAnimFrame}_${activeAction || 'walk'}_pp${this.pixelPerfectEnabled}`;
             const playerSprite = this.playerGroup.children[0] as THREE.Sprite | undefined;
             if (playerSprite?.material) {
               const oldTex = (playerSprite.material as THREE.SpriteMaterial).map;
