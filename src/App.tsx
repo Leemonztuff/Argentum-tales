@@ -23,8 +23,10 @@ import { sound } from './services/sound';
 import { contentRegistry } from './services/ContentRegistry';
 import {
   addItemToInventory,
+  canAddItemToInventory,
   shouldAutoPickupItem,
 } from './utils/inventoryUtils';
+import { rehydrateMapState, harvestedNodeKey } from './utils/mapStateUtils';
 import {
   createInitialPlayer,
   loadGameState,
@@ -292,6 +294,36 @@ export default function App() {
     };
   }, [player]);
 
+  // --- SAVE GUARANTEES: the debounced save above can starve during continuous
+  // activity (combat/movement re-triggers it forever) and is lost entirely if
+  // the tab closes. These backups guarantee a flush: every 15s while playing,
+  // and on pagehide/visibilitychange/unmount with the freshest player state.
+  useEffect(() => {
+    if (!player) return;
+    const flushSave = () => {
+      const latest = playerRef.current;
+      if (!latest) return;
+      try {
+        saveGameState(latest);
+      } catch {
+        /* non-fatal */
+      }
+    };
+    const interval = setInterval(flushSave, 15000);
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flushSave();
+    };
+    window.addEventListener('pagehide', flushSave);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('pagehide', flushSave);
+      document.removeEventListener('visibilitychange', onHide);
+      flushSave(); // last-writes-win flush on unmount / character switch
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player !== null]);
+
   // --- LOGGING, MAP ENTITIES & MAP CHANGE HELPERS ---
   const { addLog, addToast, addFloatingText, handleCycleTarget, spawnMobsForMap, changeMap } = useMapEntities({
     activeMobs,
@@ -349,6 +381,14 @@ export default function App() {
         // Apply Auto Pickup Filter
         if (!shouldAutoPickupItem(yieldItem, gameSettings.autoPickupFilters)) return;
 
+        // Only consume the node if the item can actually fit in the inventory —
+        // otherwise leave it available (previously the node was marked harvested
+        // FIRST and the resource was lost forever when the inventory was full).
+        if (!canAddItemToInventory(player.inventory, yieldItem)) {
+          addLog(`¡Inventario lleno! No pudiste recolectar: ${yieldItem.name}`, 'system');
+          return;
+        }
+
         node.harvested = true;
         sound.playGather();
 
@@ -356,7 +396,6 @@ export default function App() {
           if (!prev) return null;
           const { inventory: newInv, success } = addItemToInventory(prev.inventory, yieldItem, 1);
           if (!success) {
-            addLog(`¡Inventario lleno! No pudiste recolectar: ${yieldItem.name}`, 'system');
             return prev;
           }
 
@@ -491,33 +530,40 @@ export default function App() {
       return {
         label: 'Abrir Cofre del Tesoro',
         action: () => {
+          // Simulate adding every item on a copy first: if ANY item can't fit,
+          // abort without opening the chest (previously items silently vanished
+          // into a chest that was already marked as opened, and items never stacked).
+          let simInv = [...player.inventory];
+          for (const { itemId, count } of chest.items) {
+            const itemData = ITEMS[itemId];
+            if (!itemData) continue;
+            const res = addItemToInventory(simInv, itemData, count);
+            if (!res.success) {
+              addLog('¡Inventario lleno! Liberá espacio antes de abrir el cofre.', 'system');
+              addFloatingText('¡Inventario lleno!', '#ef4444', chest.x, chest.y, 900, 'miss');
+              return;
+            }
+            simInv = res.inventory;
+          }
+
           chest.isOpened = true;
           sound.playLoot();
           confetti({ particleCount: 35, spread: 60, origin: { y: 0.6 } });
 
           let gainedGold = chest.gold;
           let itemNames: string[] = [];
+          chest.items.forEach(({ itemId, count }) => {
+            const itemData = ITEMS[itemId];
+            if (itemData) itemNames.push(`${itemData.name} x${count}`);
+          });
 
           setPlayer((prev) => {
             if (!prev) return null;
-            const newInv = [...prev.inventory];
-
-            chest.items.forEach(({ itemId, count }) => {
-              const itemData = ITEMS[itemId];
-              if (!itemData) return;
-              itemNames.push(`${itemData.name} x${count}`);
-
-              // Find empty slot or stack
-              const emptyIdx = newInv.findIndex((i) => i === null);
-              if (emptyIdx !== -1) {
-                newInv[emptyIdx] = { ...itemData, count };
-              }
-            });
-
+            // Apply the pre-validated contents (already fits; stacks correctly).
             return {
               ...prev,
               gold: prev.gold + gainedGold,
-              inventory: newInv,
+              inventory: simInv,
               openedChests: [...prev.openedChests, chest.id],
             };
           });
@@ -537,16 +583,19 @@ export default function App() {
       return {
         label: `Recolectar ${yieldItem?.name || 'Recurso'}`,
         action: () => {
+          // Verify space BEFORE consuming the node (and stack if possible).
+          if (!yieldItem || !canAddItemToInventory(player.inventory, yieldItem)) {
+            addLog(`¡Inventario lleno! No pudiste recolectar: ${yieldItem?.name}`, 'system');
+            addFloatingText('¡Inventario lleno!', '#ef4444', node.x, node.y, 800, 'miss');
+            return;
+          }
           node.harvested = true;
           sound.playGather();
 
           setPlayer((prev) => {
             if (!prev) return null;
-            const newInv = [...prev.inventory];
-            const emptyIdx = newInv.findIndex((i) => i === null);
-            if (emptyIdx !== -1 && yieldItem) {
-              newInv[emptyIdx] = { ...yieldItem, count: 1 };
-            }
+            const { inventory: newInv, success } = addItemToInventory(prev.inventory, yieldItem, 1);
+            if (!success) return prev;
 
             // Check gather quest progress
             const updatedQuests = prev.activeQuests.map((q) => {
@@ -560,6 +609,7 @@ export default function App() {
               ...prev,
               inventory: newInv,
               activeQuests: updatedQuests,
+              harvestedNodes: [...(prev.harvestedNodes ?? []), harvestedNodeKey(currentMap.id, node.id)],
             };
           });
 
@@ -662,11 +712,14 @@ export default function App() {
 
         const tickWalk = (stepIdx: number) => {
           const path = autoAlignPathRef.current;
-          if (stepIdx >= path.length) {
+            if (stepIdx >= path.length) {
             setIsAutoAligning(false);
-            autoAlignTimeoutRef.current = null;
-            // Execute physical attack once arrived
-            setTimeout(() => {
+            // Execute physical attack once arrived — the timeout lives in
+            // autoAlignTimeoutRef so cancelAutoAlign/unmount also cancels it
+            // (previously an orphaned timer fired handlePlayerAttack with a
+            // stale closure after cancelling, dying or changing maps).
+            autoAlignTimeoutRef.current = setTimeout(() => {
+              autoAlignTimeoutRef.current = null;
               handlePlayerAttack();
             }, 80);
             return;
@@ -983,6 +1036,8 @@ export default function App() {
 
     // Helper to apply EXP and handle Level Up
     const applyExpReward = (amount: number) => {
+      // Computed inside the updater (pure); effects fire once, outside.
+      let finalLevel: number | null = null;
       setPlayer((prev) => {
         if (!prev) return null;
         let newExp = prev.exp + amount;
@@ -993,19 +1048,19 @@ export default function App() {
         let currentHp = prev.currentHp;
         let currentMp = prev.currentMp;
 
-        // Level up check
-        if (newExp >= newExpToNext) {
+        // Loop: a single EXP reward can overflow several level thresholds
+        // (previously only ONE level was granted and the excess EXP was lost).
+        while (newExp >= newExpToNext) {
           newLevel += 1;
           newExp = newExp - newExpToNext;
           newExpToNext = Math.round(newExpToNext * 1.5);
           maxHp += 15;
           maxMp += 10;
+        }
+        if (newLevel > prev.level) {
           currentHp = maxHp;
           currentMp = maxMp;
-          sound.playLevelUp();
-          addLog(`¡SUBISTE AL NIVEL ${newLevel}! Salud y maná restaurados.`, 'system');
-          addToast('¡SUBISTE DE NIVEL!', `Alcanzaste el Nivel ${newLevel}`, '🏆', 'level');
-          confetti({ particleCount: 70, spread: 90, origin: { y: 0.4 } });
+          finalLevel = newLevel;
         }
 
         return {
@@ -1019,6 +1074,13 @@ export default function App() {
           currentMp,
         };
       });
+
+      if (finalLevel !== null) {
+        sound.playLevelUp();
+        addLog(`¡SUBISTE AL NIVEL ${finalLevel}! Salud y maná restaurados.`, 'system');
+        addToast('¡SUBISTE DE NIVEL!', `Alcanzaste el Nivel ${finalLevel}`, '🏆', 'level');
+        confetti({ particleCount: 70, spread: 90, origin: { y: 0.4 } });
+      }
     };
 
     // Helper to add gold
@@ -1142,8 +1204,17 @@ export default function App() {
     const map = currentMapRef.current;
     const night = isNightRef.current;
 
-    setActiveMobs((currentMobs) =>
-      currentMobs.map((mob) => {
+    // Compute mob updates PURELY outside the state updater: React may invoke
+    // updater functions more than once (StrictMode / concurrent rendering),
+    // which would double-apply player damage, death penalties and sounds.
+    // Also accumulate damage locally so simultaneous mob hits stack correctly
+    // instead of overwriting each other.
+    let playerHp = p.currentHp;
+    let playerDied = false;
+    let deathMobName = '';
+    let deathTemplateId: string | null = null;
+
+    const nextMobs = mobsRef.current.map((mob) => {
         const template = MOBS[mob.templateId];
         if (!template) return mob;
 
@@ -1168,7 +1239,7 @@ export default function App() {
         // Check if aligned and in range to attack player
         const alignCheck = CombatEngine.isAligned(mob.x, mob.y, p.x, p.y, template.range);
 
-        if (hasAgro && alignCheck.aligned && now - mob.lastAttackTime >= mob.attackIntervalMs) {
+        if (hasAgro && !playerDied && alignCheck.aligned && now - mob.lastAttackTime >= mob.attackIntervalMs) {
           // Mob executes attack against player (nocturnal bonus at night)
           const effectiveTemplate = night
             ? {
@@ -1199,15 +1270,13 @@ export default function App() {
               addLog(result.message, 'mob_hit');
             }
 
-            const newPlayerHp = p.currentHp - result.damage;
-            if (newPlayerHp <= 0) {
+            playerHp -= result.damage;
+            if (playerHp <= 0) {
               // Player Defeat (§5.8)
               sound.playPlayerDeath();
-              const goldPenalty = Math.round(p.gold * 0.1);
-              useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
-              setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
-            } else {
-              setPlayer((prev) => (prev ? { ...prev, currentHp: newPlayerHp } : null));
+              playerDied = true;
+              deathMobName = mob.name;
+              deathTemplateId = mob.templateId;
             }
           } else {
             addFloatingText('¡ESQUIVASTE!', '#4ade80', p.x, p.y, undefined, 'miss');
@@ -1229,20 +1298,18 @@ export default function App() {
             // Execute the ability: AoE damage if player is within radius
             const telegraphDist = Math.hypot(mob.x - p.x, mob.y - p.y);
             const radius = mob.telegraphRadius ?? 1;
-            if (telegraphDist <= radius + 0.5) {
+            if (telegraphDist <= radius + 0.5 && !playerDied) {
               const abilityDmg = mob.telegraphDamage ?? 20;
-              const newHp = p.currentHp - abilityDmg;
               sound.playHitImpact();
               rendererRef.current?.triggerScreenShake(0.5, 350);
               addFloatingText(`-${abilityDmg} AoE`, '#f97316', p.x, p.y);
               addLog(`${mob.name} golpea con habilidad especial por ${abilityDmg}`, 'mob_hit');
-              if (newHp <= 0) {
+              playerHp -= abilityDmg;
+              if (playerHp <= 0) {
                 sound.playPlayerDeath();
-                const goldPenalty = Math.round(p.gold * 0.1);
-                useUIStore.getState().setDeathInfo({ killerName: mob.name, goldLost: goldPenalty });
-                setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: mob.templateId } : null));
-              } else {
-                setPlayer((prev) => (prev ? { ...prev, currentHp: newHp } : null));
+                playerDied = true;
+                deathMobName = mob.name;
+                deathTemplateId = mob.templateId;
               }
             }
             return { ...mob, state: 'attacking', telegraphEnd: undefined, telegraphRadius: undefined, telegraphDamage: undefined };
@@ -1306,8 +1373,18 @@ export default function App() {
           lastAgroTime: updatedLastAgroTime,
           state: nextState,
         };
-      })
-    );
+    });
+
+    // Apply the computed mob state and the accumulated player damage once,
+    // outside any updater function.
+    setActiveMobs(nextMobs);
+    if (playerDied) {
+      const goldPenalty = Math.round(p.gold * 0.1);
+      useUIStore.getState().setDeathInfo({ killerName: deathMobName, goldLost: goldPenalty });
+      setPlayer((prev) => (prev ? { ...prev, currentHp: 0, revengeTargetTemplateId: deathTemplateId ?? undefined } : null));
+    } else if (playerHp !== p.currentHp) {
+      setPlayer((prev) => (prev ? { ...prev, currentHp: playerHp } : null));
+    }
   };
 
   // --- CENTRAL GAME LOOP SETUP ---
@@ -1418,6 +1495,7 @@ export default function App() {
     });
 
     useUIStore.getState().setDeathInfo(null);
+    rehydrateMapState(MAPS.pueblo_inicial, player);
     setCurrentMap(MAPS.pueblo_inicial);
     spawnMobsForMap(MAPS.pueblo_inicial, player.revengeTargetTemplateId);
     addLog('Reapareciste en la Villa de Ullathorpe.', 'system');
@@ -1668,6 +1746,7 @@ export default function App() {
               setIsCharacterCreating(false);
               setCreatingSlotIndex(null);
               const startMap = MAPS[newPlayer.currentMapId] || MAPS.pueblo_inicial;
+              rehydrateMapState(startMap, newPlayer); // reset singleton leftovers from other characters
               setCurrentMap(startMap);
               spawnMobsForMap(startMap);
               const startMsg = `¡Bienvenido a Arandor, ${newPlayer.name}! Tu aventura comienza en la ciudad segura de Villa Ullathorpe.`;

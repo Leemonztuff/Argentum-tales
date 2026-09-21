@@ -79,10 +79,11 @@ export function shouldAutoPickupItem(
 export function addItemToInventory(
   inventory: (Item | null)[],
   itemToAdd: Item,
-  countToAdd: number = 1
+  countToAdd?: number
 ): { inventory: (Item | null)[]; success: boolean; stacked: boolean; slotIndex: number } {
   const newInv = [...inventory];
-  const amount = countToAdd || itemToAdd.count || 1;
+  // If count is omitted, fall back to the item's own count (e.g. a x50 arrow pack).
+  const amount = countToAdd ?? itemToAdd.count ?? 1;
 
   if (isStackableItem(itemToAdd)) {
     // 1. Check for existing stackable slot with same item id
@@ -114,6 +115,17 @@ export function addItemToInventory(
 }
 
 /**
+ * Checks whether an item could be added to the inventory (stackable with an
+ * existing stack, or a free slot) WITHOUT mutating anything.
+ */
+export function canAddItemToInventory(inventory: (Item | null)[], item: Item): boolean {
+  if (isStackableItem(item) && inventory.some((i) => i !== null && i.id === item.id)) {
+    return true;
+  }
+  return inventory.some((i) => i === null);
+}
+
+/**
  * Consolidates and sorts inventory slots:
  * Groups all stackable items of the same ID together into single stacked elements.
  */
@@ -142,17 +154,17 @@ export function consolidateInventory(inventory: (Item | null)[]): (Item | null)[
   }
 
   let index = 0;
-  // Place stacked items first
+  // Place stacked items first. Items that exceed the visible slot count are
+  // KEPT (appended beyond 20) instead of being silently destroyed.
   for (const item of stackedMap.values()) {
-    if (index < 20) {
-      result[index++] = item;
-    }
+    result[index++] = item;
   }
   // Place unstackables next
   for (const item of unstackables) {
-    if (index < 20) {
-      result[index++] = item;
-    }
+    result[index++] = item;
+  }
+  if (index > 20) {
+    console.warn(`[inventory] consolidateInventory: ${index - 20} ítem(s) exceden las 20 casillas visibles.`);
   }
 
   return result;
