@@ -37,7 +37,7 @@ export interface HandSocket {
  * Tabla base de sockets. Valores pensados para cuerpos humanoides AO-style;
  * ajustables en runtime vía setSocketOverride (persistidos en localStorage).
  */
-const DEFAULT_HAND_SOCKETS: Record<Facing, HandSocket> = {
+export const DEFAULT_HAND_SOCKETS: Record<Facing, HandSocket> = {
   down:  { x: 0.74, y: 0.52, angleDeg: 35,  flipX: false, behindBody: false },
   left:  { x: 0.20, y: 0.50, angleDeg: 80,  flipX: true,  behindBody: false },
   right: { x: 0.80, y: 0.50, angleDeg: -80, flipX: false, behindBody: false },
@@ -71,7 +71,34 @@ export function getHandSocket(facing: Facing, _animFrame = 0): HandSocket {
 }
 
 /** Bob vertical (px canvas) que se suma al socket según el frame de caminata. */
-export function getSocketBobPx(animFrame: number): number {
+// --- Override de escala de arma (global, persistido por separado) ---
+const WEAPON_SCALE_KEY = 'ao_weapon_scale_v1';
+let weaponScaleOverride: number | null = null;
+try {
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem(WEAPON_SCALE_KEY);
+    if (saved) {
+      const v = parseFloat(saved);
+      if (Number.isFinite(v) && v > 0) weaponScaleOverride = v;
+    }
+  }
+} catch { /* ignore */ }
+
+/** Escala efectiva del arma (alto como fraccion del contenido del cuerpo). */
+export function getWeaponScale(): number {
+  return weaponScaleOverride ?? WEAPON_HEIGHT_RATIO;
+}
+
+/** Guarda/limpia el override de escala de arma (persiste en localStorage). */
+export function setWeaponScale(v: number | null): void {
+  weaponScaleOverride = v;
+  try {
+    if (v === null) localStorage.removeItem(WEAPON_SCALE_KEY);
+    else localStorage.setItem(WEAPON_SCALE_KEY, String(v));
+  } catch { /* ignore */ }
+}
+
+/** Descripcion del socket de mano por direccion. */export function getSocketBobPx(animFrame: number): number {
   return WALK_BOB_PX[((animFrame % 4) + 4) % 4];
 }
 

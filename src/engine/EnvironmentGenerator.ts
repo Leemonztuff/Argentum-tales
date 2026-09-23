@@ -20,6 +20,44 @@ function randomRange(min: number, max: number, seed: number) {
   return min + (max - min) * seededRandom(seed);
 }
 
+// Generates a tangent-space normal map from a color canvas, using luminance
+// as height and a Sobel operator for the slope (world-art terrain relief).
+// `target` allows regenerating in-place after async source redraws.
+function generateNormalMapFromCanvas(src: HTMLCanvasElement, strength: number = 2.2, target?: HTMLCanvasElement): HTMLCanvasElement {
+  const size = src.width;
+  const out = target ?? document.createElement('canvas');
+  out.width = size;
+  out.height = size;
+  const sctx = src.getContext('2d')!;
+  const octx = out.getContext('2d')!;
+  const img = sctx.getImageData(0, 0, size, size).data;
+  const oimg = octx.createImageData(size, size);
+  const d = oimg.data;
+  const lumAt = (x: number, y: number) => {
+    x = (x + size) % size; // wrap for seamless tiling
+    y = (y + size) % size;
+    const i = (y * size + x) * 4;
+    return (img[i] * 0.299 + img[i + 1] * 0.587 + img[i + 2] * 0.114) / 255;
+  };
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const tl = lumAt(x - 1, y - 1), t = lumAt(x, y - 1), tr = lumAt(x + 1, y - 1);
+      const l = lumAt(x - 1, y), r = lumAt(x + 1, y);
+      const bl = lumAt(x - 1, y + 1), b = lumAt(x, y + 1), br = lumAt(x + 1, y + 1);
+      const dx = ((tr + 2 * r + br) - (tl + 2 * l + bl)) * strength;
+      const dy = ((bl + 2 * b + br) - (tl + 2 * t + tr)) * strength;
+      const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+      const o = (y * size + x) * 4;
+      d[o] = Math.round((-dx * inv * 0.5 + 0.5) * 255);
+      d[o + 1] = Math.round((-dy * inv * 0.5 + 0.5) * 255);
+      d[o + 2] = Math.round((inv * 0.5 + 0.5) * 255);
+      d[o + 3] = 255;
+    }
+  }
+  octx.putImageData(oimg, 0, 0);
+  return out;
+}
+
 function createDeformedGeometry(geometry: THREE.BufferGeometry, amount: number, seedOffset: number) {
   const pos = geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -494,7 +532,7 @@ function getGroundTextureImage(url: string): HTMLImageElement {
   return img;
 }
 
-function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, theme: string, biome?: typeof BIOMES[string]): THREE.Texture {
+function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, theme: string, biome?: typeof BIOMES[string]): { map: THREE.Texture; normalMap: THREE.Texture } {
   // 184px cell = atlas.jpg cell size (736x368 / 4x2), keeping generated
   // ground tiles at the exact same native density as static stone/wood
   // planes (world-art §5 pixel-density coherence). 1:1 draw, no resample.
@@ -528,7 +566,15 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
   texture.wrapT = THREE.RepeatWrapping;
   texture.needsUpdate = true;
 
-  // 2. Try loading the new tileable ground textures first, fall back to Cainos tiles
+  // Terrain relief: normal map derived from the tile's luminance. The shared
+  // target canvas lets async source redraws regenerate relief in place.
+  const normalCanvas = generateNormalMapFromCanvas(canvas, isPath ? 2.6 : 2.0);
+  const normalTex = new THREE.CanvasTexture(normalCanvas);
+  normalTex.minFilter = THREE.LinearFilter;
+  normalTex.magFilter = THREE.LinearFilter;
+  normalTex.wrapS = THREE.RepeatWrapping;
+  normalTex.wrapT = THREE.RepeatWrapping;
+  normalTex.needsUpdate = true;
   const newGroundUrl = isPath ? biome?.pathTexture : biome?.groundTexture;
   const newGroundImg = newGroundUrl ? getGroundTextureImage(newGroundUrl) : null;
   const useNewGround = newGroundImg && newGroundImg.complete && newGroundImg.naturalWidth > 0;
@@ -586,6 +632,10 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
     }
 
     texture.needsUpdate = true;
+
+    // Regenerate relief so asynchronously loaded ground art also gets normals.
+    generateNormalMapFromCanvas(canvas, isPath ? 2.6 : 2.0, normalCanvas);
+    normalTex.needsUpdate = true;
   };
 
   if (useNewGround) {
@@ -615,12 +665,23 @@ function generateBlendedTileTexture(biomeColorHex: number, isPath: boolean, them
     }
   }
 
-  return texture;
+  return { map: texture, normalMap: normalTex };
 }
 
 export class EnvironmentGenerator {
   private instances: THREE.InstancedMesh[] = [];
   private group: THREE.Group | null = null;
+
+  // Distance-culling registry (mejora 4): instances scaled to zero past
+  // cullRadius; recomputed only when the player crosses a tile boundary.
+  private cullables: { mesh: THREE.InstancedMesh; positions: { x: number; z: number }[]; matrices: THREE.Matrix4[] }[] = [];
+  private cullRadius = 20;
+  private lastCullKey = '';
+  private zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+
+  // Terrain destruction (mejora 9): current map ref + reusable scorch decal.
+  private currentMap: GameMap | null = null;
+  private scorchMaterial: THREE.MeshToonMaterial | null = null;
   
   private treeFamily = buildTreeFamily();
   
@@ -663,6 +724,111 @@ export class EnvironmentGenerator {
   public update(dt: number) {
     for (const u of this.fluidUniforms) u.value += dt;
     this.foamMaterial.opacity = 0.45 + 0.12 * Math.sin((this.fluidUniforms[0]?.value ?? 0) * 1.1);
+  }
+
+  /**
+   * Distance culling for instanced props/decor (mejora 4). Recalculates only
+   * when the player crosses a tile boundary; far instances become zero-scale.
+   */
+  private registerCullable(mesh: THREE.InstancedMesh, positions: { x: number; z: number }[], matrices: THREE.Matrix4[]) {
+    this.cullables.push({ mesh, positions, matrices });
+    this.lastCullKey = ''; // force re-evaluation on next update
+  }
+
+  public updateCulling(px: number, pz: number) {
+    const key = `${Math.floor(px)},${Math.floor(pz)}`;
+    if (key === this.lastCullKey) return;
+    this.lastCullKey = key;
+    const r2 = this.cullRadius * this.cullRadius;
+    for (const rec of this.cullables) {
+      let minDist2 = Infinity;
+      for (let i = 0; i < rec.positions.length; i++) {
+        const dx = rec.positions[i].x - px;
+        const dz = rec.positions[i].z - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < minDist2) minDist2 = d2;
+        rec.mesh.setMatrixAt(i, d2 > r2 ? this.zeroMatrix : rec.matrices[i]);
+      }
+      rec.mesh.instanceMatrix.needsUpdate = true;
+      // Shadow LOD: distant meshes stop casting shadows (cheapest pass saved).
+      rec.mesh.castShadow = minDist2 < r2;
+    }
+  }
+
+  /**
+   * Terrain destruction (mejora 9): scorch decal + walkable tile mutation.
+   * Walkable tiles hit become scorched stone (type 3 — stays walkable, reads
+   * as battle-damaged). Decals persist until map change.
+   */
+  private getScorchMaterial(): THREE.MeshToonMaterial {
+    if (this.scorchMaterial) return this.scorchMaterial;
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#0c0a08';
+    ctx.fillRect(0, 0, size, size);
+    const shades = ['#141009', '#1c160c', '#080604', '#241c10'];
+    for (let i = 0; i < 300; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      ctx.fillStyle = shades[Math.floor(Math.random() * shades.length)];
+      ctx.fillRect(x, y, 1 + Math.random() * 2, 1 + Math.random() * 2);
+    }
+    // Ember glow near the very center
+    const ember = ctx.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size * 0.22);
+    ember.addColorStop(0, 'rgba(190, 80, 20, 0.55)');
+    ember.addColorStop(1, 'rgba(190, 80, 20, 0)');
+    ctx.fillStyle = ember;
+    ctx.fillRect(0, 0, size, size);
+    // Feather edges to transparency
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-in';
+    const grad = ctx.createRadialGradient(size / 2, size / 2, size * 0.08, size / 2, size / 2, size * 0.5);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.5, 'rgba(0,0,0,0.85)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    ctx.restore();
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.needsUpdate = true;
+    this.scorchMaterial = new THREE.MeshToonMaterial({ map: texture, transparent: true, gradientMap: toonGradient, depthWrite: false });
+    return this.scorchMaterial;
+  }
+
+  public scorchTile(x: number, y: number, radiusTiles: number = 1) {
+    if (!this.group) return;
+    // Mutate walkable tiles to scorched stone (walkable — reads as damage,
+    // never traps the player).
+    if (this.currentMap) {
+      for (let dy = -radiusTiles + 1; dy <= radiusTiles - 1; dy++) {
+        for (let dx = -radiusTiles + 1; dx <= radiusTiles - 1; dx++) {
+          const tx = Math.floor(x) + dx;
+          const ty = Math.floor(y) + dy;
+          const t = this.currentMap.tiles[ty]?.[tx];
+          if (t === 0 || t === 3 || t === 4 || t === 8) this.currentMap.tiles[ty]![tx] = 3;
+        }
+      }
+    }
+    const mat = this.getScorchMaterial();
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2);
+    for (let dy = -radiusTiles + 1; dy <= radiusTiles - 1; dy++) {
+      for (let dx = -radiusTiles + 1; dx <= radiusTiles - 1; dx++) {
+        const seed = (Math.floor(x) + dx) * 1000 + (Math.floor(y) + dy);
+        const mesh = new THREE.Mesh(geo, mat);
+        const s = randomRange(0.9, 1.35, seed);
+        mesh.position.set(Math.floor(x) + dx, ENV_AESTHETICS.terrain.groundHeight + 0.009, Math.floor(y) + dy);
+        mesh.rotation.y = randomRange(0, Math.PI * 2, seed + 1);
+        mesh.scale.set(s, 1, s);
+        this.group.add(mesh);
+        this.instances.push(mesh as any);
+      }
+    }
   }
 
   // Vegetation billboard system — single draw call for all foliage
@@ -741,7 +907,7 @@ export class EnvironmentGenerator {
     this.instances.forEach((instance: any) => {
       if (this.group) this.group.remove(instance);
       if (instance.geometry) instance.geometry.dispose();
-      if (instance.material) {
+      if (instance.material && instance.material !== this.scorchMaterial) {
         if (Array.isArray(instance.material)) {
           instance.material.forEach((m: any) => {
             if (m.map) m.map.dispose();
@@ -754,6 +920,9 @@ export class EnvironmentGenerator {
       }
     });
     this.instances = [];
+    this.cullables = [];
+    this.lastCullKey = '';
+    this.currentMap = null;
     if (this.vegSystem) {
       const mesh = this.vegSystem.getMesh();
       if (mesh && this.group) this.group.remove(mesh);
@@ -765,21 +934,26 @@ export class EnvironmentGenerator {
   public buildMap(map: GameMap, parentGroup: THREE.Group) {
     this.clear();
     this.group = parentGroup;
+    this.currentMap = map;
 
     const biome = BIOMES[map.theme] || BIOMES['plains'];
 
     // Dynamically generate procedural canvas textures for ground and blended route
-    const grassTex = generateBlendedTileTexture(biome.groundColor, false, map.theme, biome);
-    const pathTex = generateBlendedTileTexture(biome.groundColor, true, map.theme, biome);
+    const groundTiles = generateBlendedTileTexture(biome.groundColor, false, map.theme, biome);
+    const pathTiles = generateBlendedTileTexture(biome.groundColor, true, map.theme, biome);
 
     const grassMat = new THREE.MeshToonMaterial({
-      map: grassTex,
+      map: groundTiles.map,
+      normalMap: groundTiles.normalMap,
+      normalScale: new THREE.Vector2(0.55, 0.55),
       gradientMap: toonGradient,
       side: THREE.DoubleSide
     });
 
     const pathMat = new THREE.MeshToonMaterial({
-      map: pathTex,
+      map: pathTiles.map,
+      normalMap: pathTiles.normalMap,
+      normalScale: new THREE.Vector2(0.4, 0.4),
       gradientMap: toonGradient,
       side: THREE.DoubleSide
     });
@@ -979,6 +1153,9 @@ export class EnvironmentGenerator {
 
         const dummy = new THREE.Object3D();
         let i = 0;
+        const canCull = typeFilter === 'ore';
+        const positions: { x: number; z: number }[] = [];
+        const matrices: THREE.Matrix4[] = [];
         variantPlacements.forEach(p => {
           dummy.position.set(p.x, positionYOffset, p.y);
           
@@ -1008,6 +1185,10 @@ export class EnvironmentGenerator {
 
           dummy.updateMatrix();
           mesh1.setMatrixAt(i, dummy.matrix);
+          if (canCull) {
+            positions.push({ x: dummy.position.x, z: dummy.position.z });
+            matrices.push(dummy.matrix.clone());
+          }
 
           if (mesh2) {
             if (typeFilter === 'tree') {
@@ -1029,6 +1210,9 @@ export class EnvironmentGenerator {
           }
           i++;
         });
+        if (canCull) {
+          this.registerCullable(mesh1, positions, matrices);
+        }
       }
     };
 
@@ -1048,6 +1232,8 @@ export class EnvironmentGenerator {
         this.group!.add(mesh);
         this.instances.push(mesh);
 
+        const positions: { x: number; z: number }[] = [];
+        const matrices: THREE.Matrix4[] = [];
         const dummy = new THREE.Object3D();
         let i = 0;
         variantPlacements.forEach(p => {
@@ -1056,7 +1242,10 @@ export class EnvironmentGenerator {
           dummy.rotation.set(0, randomRange(0, Math.PI * 2, p.seed + 1), 0);
           dummy.updateMatrix();
           mesh.setMatrixAt(i++, dummy.matrix);
+          positions.push({ x: dummy.position.x, z: dummy.position.z });
+          matrices.push(dummy.matrix.clone());
         });
+        this.registerCullable(mesh, positions, matrices);
       }
     };
 
@@ -1138,6 +1327,8 @@ export class EnvironmentGenerator {
       const dirtMesh = new THREE.InstancedMesh(dirtGeo, createDirtPatchMaterial(), dirtFiltered.length);
       dirtMesh.receiveShadow = true;
       const dirtDummy = new THREE.Object3D();
+      const dirtPositions: { x: number; z: number }[] = [];
+      const dirtMatrices: THREE.Matrix4[] = [];
       dirtFiltered.forEach((p, i) => {
         const s = randomRange(0.7, 1.35, p.seed);
         dirtDummy.position.set(p.x, ENV_AESTHETICS.terrain.groundHeight + 0.007, p.y);
@@ -1145,9 +1336,12 @@ export class EnvironmentGenerator {
         dirtDummy.scale.set(s, 1, s * randomRange(0.85, 1.15, p.seed + 2));
         dirtDummy.updateMatrix();
         dirtMesh.setMatrixAt(i, dirtDummy.matrix);
+        dirtPositions.push({ x: p.x, z: p.y });
+        dirtMatrices.push(dirtDummy.matrix.clone());
       });
       this.group!.add(dirtMesh);
       this.instances.push(dirtMesh);
+      this.registerCullable(dirtMesh, dirtPositions, dirtMatrices);
     }
 
     // Stylized shoreline foam strips (world-art §8) — just above the water

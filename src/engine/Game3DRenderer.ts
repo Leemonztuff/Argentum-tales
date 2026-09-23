@@ -15,11 +15,13 @@ import {
   getNeckAnchor,
   getSocketBobPx,
   socketToCanvas,
+  getWeaponScale,
   WEAPON_HEIGHT_RATIO,
   type ContentRect,
   type HandSocket,
 } from './SpriteSockets';
-import { getWeaponSpriteUrl } from '../data/weaponSprites';
+import { getWeaponSpriteUrl, WEAPON_SPRITES } from '../data/weaponSprites';
+
 import {
   HP_BAR,
   QUAD_CENTER_TO_FEET_UNIT,
@@ -54,43 +56,93 @@ export const DEFAULT_HEAD_CALIBRATION: HeadCalibrationConfig = {
   overlap: 44,
 };
 
-let currentHeadCalibration: HeadCalibrationConfig = { ...DEFAULT_HEAD_CALIBRATION };
+// --- Calibracion de cabeza v3: base global + override por vista (facing) ---
+export type HeadFacing = 'up' | 'down' | 'left' | 'right';
+
+interface HeadCalibrationStore {
+  base: HeadCalibrationConfig;
+  perFacing: Partial<Record<HeadFacing, Partial<HeadCalibrationConfig>>>;
+}
+
+let headCalibrationStore: HeadCalibrationStore = {
+  base: { ...DEFAULT_HEAD_CALIBRATION },
+  perFacing: {},
+};
 const activeRenderers: Set<Game3DRenderer> = new Set();
 
+const HEAD_CALIBRATION_KEY = 'ao_head_calibration_v3';
 try {
   if (typeof localStorage !== 'undefined') {
-    // v2 keys: keep the user's size preference (scaleRatio/offsetX) but reset the
-    // position sliders to the new defaults (old offsetY/overlap were dead zones).
-    const saved = localStorage.getItem('ao_head_calibration_v2') || localStorage.getItem('ao_head_calibration');
+    const saved = localStorage.getItem(HEAD_CALIBRATION_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved);
-      // Migrate from the previous dead-zone model: keep only scaleRatio/offsetX.
-      const migrated = localStorage.getItem('ao_head_calibration_v2') ? parsed : {};
-      if (typeof parsed.scaleRatio === 'number') currentHeadCalibration.scaleRatio = parsed.scaleRatio;
-      if (typeof migrated.offsetX === 'number') currentHeadCalibration.offsetX = migrated.offsetX;
+      const parsed = JSON.parse(saved) as Partial<HeadCalibrationStore>;
+      if (parsed.base) headCalibrationStore.base = { ...DEFAULT_HEAD_CALIBRATION, ...parsed.base };
+      if (parsed.perFacing) headCalibrationStore.perFacing = parsed.perFacing;
+    } else {
+      // Migracion v2/v1: conserva solo scaleRatio/offsetX como base global.
+      const legacy = localStorage.getItem('ao_head_calibration_v2') || localStorage.getItem('ao_head_calibration');
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        if (typeof parsed.scaleRatio === 'number') headCalibrationStore.base.scaleRatio = parsed.scaleRatio;
+        if (typeof parsed.offsetX === 'number') headCalibrationStore.base.offsetX = parsed.offsetX;
+      }
     }
   }
 } catch (e) {
   console.warn('[Game3DRenderer] Error loading saved head calibration:', e);
 }
 
-export function getHeadCalibration(): HeadCalibrationConfig {
-  return { ...currentHeadCalibration };
-}
-
-const HEAD_CALIBRATION_KEY = 'ao_head_calibration_v2';
-
-export function setHeadCalibration(config: Partial<HeadCalibrationConfig>): void {
-  currentHeadCalibration = { ...currentHeadCalibration, ...config };
+export function persistHeadCalibration(): void {
   try {
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(HEAD_CALIBRATION_KEY, JSON.stringify(currentHeadCalibration));
+      localStorage.setItem(HEAD_CALIBRATION_KEY, JSON.stringify(headCalibrationStore));
     }
   } catch (e) {}
+}
 
+/** Calibracion efectiva: base global + override de la vista dada. */
+export function getHeadCalibration(facing?: HeadFacing): HeadCalibrationConfig {
+  return {
+    ...headCalibrationStore.base,
+    ...(facing ? (headCalibrationStore.perFacing[facing] ?? {}) : {}),
+  };
+}
+
+/** Lee la base global y los overrides por vista (para la UI). */
+export function getHeadCalibrationStore(): HeadCalibrationStore {
+  return JSON.parse(JSON.stringify(headCalibrationStore));
+}
+
+/**
+ * Ajusta la calibracion. Con `facing` guarda override solo para esa vista;
+ * sin facing, ajusta la base global. Persiste en localStorage (v3).
+ */
+export function setHeadCalibration(config: Partial<HeadCalibrationConfig>, facing?: HeadFacing): void {
+  if (facing) {
+    headCalibrationStore.perFacing = {
+      ...headCalibrationStore.perFacing,
+      [facing]: { ...(headCalibrationStore.perFacing[facing] ?? {}), ...config },
+    };
+  } else {
+    headCalibrationStore.base = { ...headCalibrationStore.base, ...config };
+  }
+  persistHeadCalibration();
   activeRenderers.forEach((renderer) => {
     renderer.invalidateAllCharacterSprites();
   });
+}
+
+/** Resetea una vista (o todo si no se indica facing). */
+export function resetHeadCalibration(facing?: HeadFacing): void {
+  if (facing) {
+    const pf = { ...headCalibrationStore.perFacing };
+    delete pf[facing];
+    headCalibrationStore.perFacing = pf;
+  } else {
+    headCalibrationStore = { base: { ...DEFAULT_HEAD_CALIBRATION }, perFacing: {} };
+  }
+  persistHeadCalibration();
+  activeRenderers.forEach((r) => r.invalidateAllCharacterSprites());
 }
 
 export function getActiveRenderer(): Game3DRenderer | null {
@@ -414,6 +466,9 @@ export class Game3DRenderer {
   private atlasPBRCache: Map<string, { normalTexture: THREE.Texture; roughnessTexture: THREE.Texture; metalnessTexture: THREE.Texture }> = new Map();
   public pbrGenerator: SpritePBRGenerator = new SpritePBRGenerator();
   private imageCache: Map<string, HTMLImageElement> = new Map();
+  /** Cache del rectangulo de contenido recortado por imagen de arma. */
+  private weaponCropCache: WeakMap<HTMLImageElement, { x: number; y: number; w: number; h: number } | null> = new WeakMap();
+  private preloadedPlayerAssets = false;
 
   // 2.5D Sprite Normal & Specular Lighting Getters & Setters
   public get spriteNormalEnabled(): boolean { return this.pbrGenerator.spriteNormalEnabled; }
@@ -510,6 +565,19 @@ export class Game3DRenderer {
     });
   }
 
+  /** Precarga todos los assets de equipo (bodies/armas/cabezas) para que
+   *  equipar algo nuevo nunca muestre el personaje incompleto. */
+  public preloadPlayerAssets(): void {
+    if (this.preloadedPlayerAssets) return;
+    this.preloadedPlayerAssets = true;
+    const urls = new Set<string>();
+    Object.values(ARMOR_BODY_SPRITES).forEach((u) => urls.add(u));
+    Object.values(NEW_BODY_SPRITES).forEach((u) => urls.add(u));
+    Object.values(HEAD_SPRITES).forEach((u) => urls.add(u));
+    Object.values(WEAPON_SPRITES).forEach((u) => urls.add(u));
+    urls.forEach((u) => this.getOrLoadImage(u));
+  }
+
   private getOrLoadImage(url: string): HTMLImageElement | null {
     // Check AssetLoader cache first
     const preloaded = AssetLoader.getInstance().getImage(url);
@@ -583,13 +651,14 @@ export class Game3DRenderer {
 
   /** Public view of the player's current sheet/facing (for live previews, debug). */
   public getPlayerRenderParams():
-    | { spriteUrl: string; headUrl: string; facing: 'up' | 'down' | 'left' | 'right' }
+    | { spriteUrl: string; headUrl: string; facing: 'up' | 'down' | 'left' | 'right'; weaponUrl?: string }
     | null {
     return this.playerRenderParams
       ? {
           spriteUrl: this.playerRenderParams.spriteUrl,
           headUrl: this.playerRenderParams.headUrl,
           facing: this.playerRenderParams.facing,
+          weaponUrl: this.playerRenderParams.weaponUrl,
         }
       : null;
   }
@@ -1742,7 +1811,7 @@ export class Game3DRenderer {
     const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, SPRITE_CANVAS, SPRITE_CANVAS);
 
-    const calib = getHeadCalibration();
+    const calib = getHeadCalibration(facing);
     const isPixelMode = this.pixelPerfectEnabled;
 
     ctx.imageSmoothingEnabled = !isPixelMode;
@@ -1752,7 +1821,13 @@ export class Game3DRenderer {
       : undefined;
     const bodyImg = this.getOrLoadImage(actionSlice?.url || bodyUrl);
     const headImg = this.getOrLoadImage(headUrl);
-    if (!bodyImg || !headImg) return canvas;
+    // FIX carga asincrona: si alguna capa aun no decodifico, devolvemos el
+    // canvas vacio PERO re-levantamos el refresh para reintentar el proximo
+    // frame hasta que todas las capas esten listas (no depende del movimiento).
+    if (!bodyImg || !headImg) {
+      this.playerNeedsTextureRefresh = true;
+      return canvas;
+    }
 
     // --- BODY LAYER ---
     const bodyGrid = measureSpriteSheetGrid(bodyImg);
@@ -1822,6 +1897,8 @@ export class Game3DRenderer {
     // --- WEAPON LAYER (behind body when facing away) ---
     const weaponImg = weaponUrl ? this.getOrLoadImage(weaponUrl) : null;
     const weaponReady = !!weaponImg && weaponImg.complete && weaponImg.naturalWidth > 0;
+    // Arma pedida pero sin cargar: reintentar hasta que este lista.
+    if (weaponUrl && !weaponReady) this.playerNeedsTextureRefresh = true;
     const handSocket = weaponUrl ? getHandSocket(facing, animFrame) : null;
     if (weaponReady && handSocket?.behindBody) {
       this.drawWeaponLayer(ctx, weaponImg!, handSocket, bodyContent, getSocketBobPx(animFrame));
@@ -1926,9 +2003,22 @@ export class Game3DRenderer {
     const grip = socketToCanvas(socket, bodyContent);
     grip.y += bobPx;
 
-    const targetH = Math.max(8, Math.round(bodyContent.h * WEAPON_HEIGHT_RATIO));
-    const scale = targetH / weaponImg.naturalHeight;
-    const dw = Math.max(1, Math.round(weaponImg.naturalWidth * scale));
+    // Paso 3: recortar el padding transparente del PNG del arma (una vez,
+    // cacheado por imagen). El socket ancla sobre el DIBUJO real, no sobre
+    // el borde del archivo - tolera placeholders y arte final con margenes.
+    let crop = this.weaponCropCache.get(weaponImg);
+    if (crop === undefined) {
+      crop = getNonEmptyBounds(weaponImg, 0, 0, weaponImg.naturalWidth, weaponImg.naturalHeight);
+      this.weaponCropCache.set(weaponImg, crop ?? null);
+    }
+    const srcX = crop ? crop.x : 0;
+    const srcY = crop ? crop.y : 0;
+    const srcW = crop ? crop.w : weaponImg.naturalWidth;
+    const srcH = crop ? crop.h : weaponImg.naturalHeight;
+
+    const targetH = Math.max(8, Math.round(bodyContent.h * getWeaponScale()));
+    const scale = targetH / srcH;
+    const dw = Math.max(1, Math.round(srcW * scale));
     const dh = targetH;
 
     // Pre-magenta-key en una capa: rotar el PNG directo dejaría halo magenta.
@@ -1937,7 +2027,7 @@ export class Game3DRenderer {
     layer.height = dh;
     const lctx = layer.getContext('2d')!;
     lctx.imageSmoothingEnabled = false;
-    lctx.drawImage(weaponImg, 0, 0, dw, dh);
+    lctx.drawImage(weaponImg, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
     applyMagentaKeyToCanvas(layer);
 
     ctx.save();
@@ -2267,6 +2357,8 @@ export class Game3DRenderer {
       this.logicalPlayerPos.set(player.x, player.y);
       this.smoothPlayerPos = { x: player.x, y: player.y };
     }
+
+    this.preloadPlayerAssets();
 
     // 1. Cache Player Render Parameters
     const playerIcon = player.classType === 'guerrero' ? '🛡️🗡️' : player.classType === 'cazador' ? '🏹🧝' : player.classType === 'mago' ? '🧙‍♂️✨' : '🗡️🥷';
@@ -2829,6 +2921,14 @@ export class Game3DRenderer {
   }
 
   /**
+   * Applies persistent ground damage (mejora 9): scorch decals + marks the
+   * affected walkable tiles as scorched stone until the map reloads.
+   */
+  public applyGroundDamage(x: number, y: number, radius: number = 1): void {
+    this.envGen.scorchTile(x, y, radius);
+  }
+
+  /**
    * Triggers a dynamic pulse ring on the ground reticle.
    * intensity: 0.0 = invisible, 1.0 = full bright expansion
    */
@@ -3084,6 +3184,11 @@ export class Game3DRenderer {
 
       // Animated world fluids (stylized water waves / lava pulse)
       this.envGen.update(deltaTime);
+
+      // Distance culling + shadow LOD for instanced props/decor (mejora 4)
+      if (this.currentPlayerPos) {
+        this.envGen.updateCulling(this.currentPlayerPos.x, this.currentPlayerPos.y);
+      }
 
       // Flickering torch lights
       if (this.playerLight) {

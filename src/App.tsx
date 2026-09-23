@@ -1298,6 +1298,8 @@ export default function App() {
             // Execute the ability: AoE damage if player is within radius
             const telegraphDist = Math.hypot(mob.x - p.x, mob.y - p.y);
             const radius = mob.telegraphRadius ?? 1;
+            // Persistent ground damage from boss AoE impacts (mejora 9)
+            rendererRef.current?.applyGroundDamage(Math.floor(mob.x), Math.floor(mob.y), radius);
             if (telegraphDist <= radius + 0.5 && !playerDied) {
               const abilityDmg = mob.telegraphDamage ?? 20;
               sound.playHitImpact();

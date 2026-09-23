@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { GameMap, PlayerCharacter, ActiveMob } from '../types/game';
 
 interface MinimapProps {
@@ -7,6 +7,20 @@ interface MinimapProps {
   activeMobs: ActiveMob[];
 }
 
+// Terrain palette for the radar canvas (mejora 6: real tile layout instead
+// of icons floating on a plain background).
+const TILE_COLORS: Record<number, string> = {
+  0: '#274a1e', // grass
+  1: '#3d3d4b', // wall
+  2: '#155a75', // water
+  3: '#4b4b58', // stone floor
+  4: '#5d4a33', // wood floor
+  5: '#17301a', // dense trees
+  6: '#413b3b', // big rock
+  7: '#07070d', // void
+  8: '#6e5732', // dirt path
+};
+
 export const Minimap: React.FC<MinimapProps> = ({
   currentMap,
   player,
@@ -14,6 +28,22 @@ export const Minimap: React.FC<MinimapProps> = ({
 }) => {
   const mapW = currentMap.width;
   const mapH = currentMap.height;
+
+  // Bake the tile layout once per map into a tiny pixel canvas.
+  const terrainUrl = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = mapW;
+    canvas.height = mapH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    for (let y = 0; y < mapH; y++) {
+      for (let x = 0; x < mapW; x++) {
+        ctx.fillStyle = TILE_COLORS[currentMap.tiles[y]?.[x] ?? 7] || '#111118';
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    return canvas.toDataURL();
+  }, [currentMap, mapW, mapH]);
 
   return (
     <div className="absolute top-16 right-3 pointer-events-auto z-20 hidden md:flex flex-col items-center hud-blur rounded-2xl p-2.5 shadow-2xl shadow-black/80">
@@ -26,6 +56,16 @@ export const Minimap: React.FC<MinimapProps> = ({
         className="relative bg-[#08080c]/90 border border-white/10 rounded-xl overflow-hidden shadow-inner"
         style={{ width: 104, height: 104 }}
       >
+        {/* Baked terrain layout */}
+        {terrainUrl && (
+          <img
+            src={terrainUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full opacity-80"
+            style={{ imageRendering: 'pixelated' }}
+          />
+        )}
+
         {/* Portals */}
         {currentMap.portals.map((p, idx) => (
           <div
@@ -50,6 +90,21 @@ export const Minimap: React.FC<MinimapProps> = ({
               transform: 'translate(-50%, -50%)',
             }}
             title={npc.name}
+          />
+        ))}
+
+        {/* Gather nodes */}
+        {currentMap.gatherNodes.map((node) => (
+          <div
+            key={node.id}
+            className={`absolute w-1 h-1 rounded-full ${
+              node.harvested ? 'bg-slate-600' : 'bg-emerald-300'
+            }`}
+            style={{
+              left: `${(node.x / mapW) * 100}%`,
+              top: `${(node.y / mapH) * 100}%`,
+              transform: 'translate(-50%, -50%)',
+            }}
           />
         ))}
 
