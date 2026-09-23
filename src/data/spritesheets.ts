@@ -64,10 +64,11 @@ export const ARMOR_BODY_SPRITES: Record<string, string> = {
   armadura_placas: `${NEW_BODY}/frame_010.webp`,
 };
 
-// NPC WebP de ejemplo (2 de los 11 disponibles).
+// NPC WebP (3 de los 11 disponibles).
 export const NEW_NPC_SPRITES: Record<string, string> = {
   sabio_elias: '/spritesheets/Npc-00.webp',
   herrero_boris: '/spritesheets/Npc-01.webp',
+  npc_arsenal_prueba: '/spritesheets/Npc-02.webp',
 };
 
 export const HEAD_SPRITES: Record<string, string> = {

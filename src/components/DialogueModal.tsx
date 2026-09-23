@@ -11,6 +11,7 @@ interface DialogueModalProps {
   onOpenShop?: (type: 'weapons' | 'potions' | 'crafting' | 'general') => void;
   onOpenCrafting?: (station: 'smith' | 'alchemy') => void;
   onOpenQuests?: () => void;
+  onGiveItems?: (npc: NPC) => void;
   onPromoteJob?: (jobClass: CharacterClass) => void;
   playerClass?: CharacterClass;
 }
@@ -21,6 +22,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   onOpenShop,
   onOpenCrafting,
   onOpenQuests,
+  onGiveItems,
   onPromoteJob,
   playerClass,
 }) => {
@@ -98,6 +100,17 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
           </button>
         )}
 
+        {npc.givesItems && onGiveItems && (
+          <button
+            onClick={() => {
+              onClose();
+              onGiveItems(npc);
+            }}
+            className="flex-1 min-w-[130px] bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 active:scale-95 text-white text-xs font-bold py-2 sm:py-2.5 px-3 sm:px-4 rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 sm:gap-2"
+          >
+            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> Recibir Kit de Prueba
+          </button>
+        )}
         {npc.givesQuestId && onOpenQuests && (
           <button
             onClick={() => {

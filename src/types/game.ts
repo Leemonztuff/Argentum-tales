@@ -191,6 +191,8 @@ export interface NPC {
   dialogue: string[];
   shopType?: 'weapons' | 'potions' | 'crafting' | 'general';
   givesQuestId?: string;
+  /** Le entrega al jugador una lista de items (ej. kit de prueba). */
+  givesItems?: Array<{ itemId: string; count: number }>;
   jobPromotionClass?: CharacterClass;
   isSecondJobInstructor?: boolean;
 }

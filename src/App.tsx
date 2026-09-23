@@ -1502,6 +1502,38 @@ export default function App() {
   };
 
   // --- JOB PROMOTION SYSTEM (§7.1) ---
+  // Entrega de kit de prueba por NPC (givesItems)
+  const handleGiveTestItems = (npc: NPC) => {
+    if (!npc.givesItems || npc.givesItems.length === 0) return;
+    const delivered: string[] = [];
+    const failed: string[] = [];
+    setPlayer((prev) => {
+      if (!prev) return null;
+      let inventory = prev.inventory;
+      for (const entry of npc.givesItems!) {
+        const base = ITEMS[entry.itemId];
+        if (!base) {
+          failed.push(entry.itemId);
+          continue;
+        }
+        const res = addItemToInventory(inventory, { ...base }, entry.count);
+        if (res.success) {
+          inventory = res.inventory;
+          delivered.push(base.name + (entry.count > 1 ? ' x' + entry.count : ''));
+        } else {
+          failed.push(base.name);
+        }
+      }
+      return { ...prev, inventory };
+    });
+    if (delivered.length > 0) {
+      sound.playLoot();
+      addLog('[KIT] ' + npc.name + ' te entrego: ' + delivered.join(', '), 'loot');
+    }
+    if (failed.length > 0) {
+      addLog('[KIT] No entraron en la mochila: ' + failed.join(', ') + ' (inventario lleno o id invalido)', 'system');
+    }
+  };
   const handlePromoteJob = (targetClass: CharacterClass) => {
     if (!player) return;
 
@@ -1822,6 +1854,7 @@ export default function App() {
           onOpenCrafting={(station) => useUIStore.getState().setActiveCrafting(station)}
           onOpenQuests={() => useUIStore.getState().openModal('quests')}
           onPromoteJob={handlePromoteJob}
+          onGiveItems={handleGiveTestItems}
           playerClass={player?.classType}
         />
       )}
