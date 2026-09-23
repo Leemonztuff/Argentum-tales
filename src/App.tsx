@@ -19,6 +19,7 @@ import { ITEMS } from './data/items';
 import { SPELLS } from './data/spells';
 import { INITIAL_QUESTS } from './data/quests';
 import { CombatEngine } from './services/combat';
+import { chooseAttackTarget, findBestEngagement } from './services/targeting';
 import { sound } from './services/sound';
 import { contentRegistry } from './services/ContentRegistry';
 import {
@@ -126,104 +127,7 @@ export default function App() {
     };
   }, []);
 
-  const findPath = useCallback((startX: number, startY: number, endX: number, endY: number): { x: number; y: number }[] | null => {
-    if (startX === endX && startY === endY) return [];
-
-    interface PathNode {
-      x: number;
-      y: number;
-      g: number;
-      h: number;
-      path: { x: number; y: number }[];
-    }
-
-    const startNode: PathNode = {
-      x: startX,
-      y: startY,
-      g: 0,
-      h: Math.hypot(endX - startX, endY - startY),
-      path: []
-    };
-
-    const openList: PathNode[] = [startNode];
-    const closedList = new Set<string>();
-
-    const directions = [
-      // Orthogonal directions (cost = 1)
-      { dx: 0, dy: -1, cost: 1 },
-      { dx: 0, dy: 1, cost: 1 },
-      { dx: -1, dy: 0, cost: 1 },
-      { dx: 1, dy: 0, cost: 1 },
-      // Diagonal directions (cost = 1.414)
-      { dx: -1, dy: -1, cost: 1.414 },
-      { dx: 1, dy: -1, cost: 1.414 },
-      { dx: -1, dy: 1, cost: 1.414 },
-      { dx: 1, dy: 1, cost: 1.414 },
-    ];
-
-    const isWalkable = (tx: number, ty: number): boolean => {
-      if (tx < 0 || tx >= currentMap.width || ty < 0 || ty >= currentMap.height) return false;
-      const tile = currentMap.tiles[ty]?.[tx] ?? 1;
-      const isBlocking = (t: number) => [1, 2, 5, 6, 7].includes(t);
-      if (isBlocking(tile)) return false;
-      const hasNpc = currentMap.npcs.some((n) => n.x === tx && n.y === ty);
-      if (hasNpc) return false;
-      const hasMob = activeMobs.some((m) => m.x === tx && m.y === ty && m.instanceId !== targetMob?.instanceId);
-      if (hasMob) return false;
-      return true;
-    };
-
-    while (openList.length > 0) {
-      // Find lowest total cost (f = g + h) node
-      openList.sort((a, b) => (a.g + a.h) - (b.g + b.h));
-      const current = openList.shift()!;
-
-      if (current.x === endX && current.y === endY) {
-        return current.path;
-      }
-
-      const currentKey = `${current.x},${current.y}`;
-      closedList.add(currentKey);
-
-      for (const { dx, dy, cost } of directions) {
-        const nx = current.x + dx;
-        const ny = current.y + dy;
-        const neighborKey = `${nx},${ny}`;
-
-        if (closedList.has(neighborKey)) continue;
-
-        if (isWalkable(nx, ny)) {
-          // Prevent cutting corners through hard walls diagonally
-          if (dx !== 0 && dy !== 0) {
-            if (!isWalkable(current.x + dx, current.y) || !isWalkable(current.x, current.y + dy)) {
-              continue;
-            }
-          }
-
-          const gScore = current.g + cost;
-          const hScore = Math.hypot(endX - nx, endY - ny);
-
-          const existingOpen = openList.find(n => n.x === nx && n.y === ny);
-          if (existingOpen) {
-            if (gScore < existingOpen.g) {
-              existingOpen.g = gScore;
-              existingOpen.path = [...current.path, { x: nx, y: ny }];
-            }
-          } else {
-            openList.push({
-              x: nx,
-              y: ny,
-              g: gScore,
-              h: hScore,
-              path: [...current.path, { x: nx, y: ny }]
-            });
-          }
-        }
-      }
-    }
-
-    return null;
-  }, [currentMap, activeMobs, targetMob]);
+  
 
   // References
   const rendererRef = useRef<Game3DRenderer | null>(null);
@@ -646,118 +550,111 @@ export default function App() {
 
     const weaponRange = player.equipment.weapon?.range || 1;
 
-    // Find target in straight line alignment (X or Y)
-    let target = targetMob;
+    // --- Elección de objetivo (servicio puro): respeta selección, prioriza
+    // lo alineado y luego el mob más cercano hacia donde mirás ---
+    let target = chooseAttackTarget(
+      { x: player.x, y: player.y },
+      player.facing,
+      activeMobs,
+      targetMob,
+      weaponRange
+    );
 
-    // Auto-alignment check if target selected
+    // --- Auto-alineamiento reactivo: recomputa cada paso (persigue al mob
+    // si se mueve), respeta cooldown real del arma al pegar, y cancela si el
+    // objetivo muere durante la caminata ---
     if (target) {
       const alignCheck = CombatEngine.isAligned(player.x, player.y, target.x, target.y, weaponRange);
       if (!alignCheck.aligned) {
         addLog(`Caminando automáticamente para atacar a ${target.name}...`, 'system');
 
-        // Calculate possible candidates in straight lines from target within weaponRange
-        const candidates: { x: number; y: number }[] = [];
-        for (let d = 1; d <= weaponRange; d++) {
-          candidates.push({ x: target.x - d, y: target.y });
-          candidates.push({ x: target.x + d, y: target.y });
-          candidates.push({ x: target.x, y: target.y - d });
-          candidates.push({ x: target.x, y: target.y + d });
-        }
+        const plan = findBestEngagement(
+          { x: player.x, y: player.y },
+          { x: target.x, y: target.y },
+          weaponRange,
+          currentMap,
+          activeMobs,
+          { stepMs: 180, cooldownRemainingMs: Math.max(0, remaining), ignoreMobInstanceId: target.instanceId }
+        );
 
-        // Filter valid candidates on map bounds, non-walkable tiles, NPCs, other mobs
-        const validCandidates = candidates.filter((c) => {
-          if (c.x < 0 || c.x >= currentMap.width || c.y < 0 || c.y >= currentMap.height) return false;
-          const tile = currentMap.tiles[c.y]?.[c.x] ?? 1;
-          const isBlocking = (t: number) => [1, 2, 5, 6, 7].includes(t);
-          if (isBlocking(tile)) return false;
-          const hasNpc = currentMap.npcs.some((n) => n.x === c.x && n.y === c.y);
-          if (hasNpc) return false;
-          const hasMob = activeMobs.some((m) => m.x === c.x && m.y === c.y && m.instanceId !== target!.instanceId);
-          if (hasMob) return false;
-          return true;
-        });
-
-        if (validCandidates.length === 0) {
-          addLog('No hay casillas libres para alinearse con el objetivo.', 'player_miss');
+        if (!plan || plan.path.length === 0) {
+          addLog('No hay un camino libre para alinearse con el objetivo.', 'player_miss');
           return;
         }
 
-        // Find candidate with shortest path
-        let bestPath: { x: number; y: number }[] | null = null;
-
-        validCandidates.forEach((cand) => {
-          const path = findPath(player.x, player.y, cand.x, cand.y);
-          if (path) {
-            if (!bestPath || path.length < bestPath.length) {
-              bestPath = path;
-            }
-          }
-        });
-
-        if (!bestPath || bestPath.length === 0) {
-          addLog('No se encontró un camino libre hacia el objetivo.', 'player_miss');
-          return;
-        }
-
-        // We found a path! Let's walk it!
         cancelAutoAlign();
         setIsAutoAligning(true);
-        autoAlignPathRef.current = bestPath;
+        autoAlignPathRef.current = plan.path;
 
-        // Spawn a temporary visual indicator at the destination coordinate on the game map
-        const destTile = bestPath[bestPath.length - 1];
-        if (rendererRef.current && destTile) {
-          rendererRef.current.spawnAutoAlignIndicator(destTile.x, destTile.y);
-        }
+        const finishAttack = () => {
+          setIsAutoAligning(false);
+          const p = playerRef.current;
+          if (!p) return;
+          // Espera el cooldown real del arma antes de ejecutar el golpe.
+          const wait = Math.max(80, p.lastAttackTimestamp + CombatEngine.calculateAttackInterval(p) - Date.now());
+          autoAlignTimeoutRef.current = setTimeout(() => {
+            autoAlignTimeoutRef.current = null;
+            handlePlayerAttack();
+          }, wait);
+        };
 
-        const tickWalk = (stepIdx: number) => {
-          const path = autoAlignPathRef.current;
-            if (stepIdx >= path.length) {
+        const targetInstanceId = target.instanceId;
+
+        const tickWalk = () => {
+          const p = playerRef.current;
+          if (!p) return;
+
+          // El objetivo murió o desapareció mientras caminabas.
+          const live = mobsRef.current.find((m) => m.instanceId === targetInstanceId);
+          if (!live || live.currentHp <= 0) {
             setIsAutoAligning(false);
-            // Execute physical attack once arrived — the timeout lives in
-            // autoAlignTimeoutRef so cancelAutoAlign/unmount also cancels it
-            // (previously an orphaned timer fired handlePlayerAttack with a
-            // stale closure after cancelling, dying or changing maps).
-            autoAlignTimeoutRef.current = setTimeout(() => {
-              autoAlignTimeoutRef.current = null;
-              handlePlayerAttack();
-            }, 80);
+            autoAlignPathRef.current = [];
+            addLog('El objetivo cayó antes de que llegaras.', 'system');
             return;
           }
 
-          const currentPlayer = playerRef.current;
-          if (!currentPlayer) return;
+          // ¿Ya estás alineado (o el mob vino hacia vos)? Pega sin caminar más.
+          if (CombatEngine.isAligned(p.x, p.y, live.x, live.y, weaponRange).aligned) {
+            finishAttack();
+            return;
+          }
 
-          const nextTile = path[stepIdx];
-          const dx = nextTile.x - currentPlayer.x;
-          const dy = nextTile.y - currentPlayer.y;
+          // Re-plan desde la posición actual — sigue al objetivo en movimiento.
+          const step = findBestEngagement(
+            { x: p.x, y: p.y },
+            { x: live.x, y: live.y },
+            weaponRange,
+            currentMap,
+            mobsRef.current,
+            { stepMs: 180, ignoreMobInstanceId: live.instanceId }
+          );
 
-          // Pass `true` as third argument (isAuto)
-          handlePlayerMove(dx, dy, true);
+          if (!step || step.path.length === 0) {
+            setIsAutoAligning(false);
+            autoAlignPathRef.current = [];
+            addLog('No se encontró un camino libre hacia el objetivo.', 'player_miss');
+            return;
+          }
 
-          autoAlignTimeoutRef.current = setTimeout(() => {
-            tickWalk(stepIdx + 1);
-          }, 180);
+          autoAlignPathRef.current = step.path;
+          if (rendererRef.current && step.dest) {
+            rendererRef.current.spawnAutoAlignIndicator(step.dest.x, step.dest.y);
+          }
+
+          const nextTile = step.path[0];
+          handlePlayerMove(nextTile.x - p.x, nextTile.y - p.y, true);
+          autoAlignTimeoutRef.current = setTimeout(tickWalk, 180);
         };
 
-        const nextTile = bestPath[0];
-        const dx = nextTile.x - player.x;
-        const dy = nextTile.y - player.y;
-        handlePlayerMove(dx, dy, true);
-
-        autoAlignTimeoutRef.current = setTimeout(() => {
-          tickWalk(1);
-        }, 180);
+        if (rendererRef.current && plan.dest) {
+          rendererRef.current.spawnAutoAlignIndicator(plan.dest.x, plan.dest.y);
+        }
+        const firstTile = plan.path[0];
+        handlePlayerMove(firstTile.x - player.x, firstTile.y - player.y, true);
+        autoAlignTimeoutRef.current = setTimeout(tickWalk, 180);
 
         return;
       }
-    }
-
-    if (!target) {
-      target = activeMobs.find((m) => {
-        const align = CombatEngine.isAligned(player.x, player.y, m.x, m.y, weaponRange);
-        return align.aligned;
-      }) || null;
     }
 
     // Check weapon arrows consumption
